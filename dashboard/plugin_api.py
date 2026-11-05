@@ -242,9 +242,28 @@ def status():
     info["state"] = state
     info["connected"] = bounds is not None
     if bounds is not None:
-        info["device"] = bounds.get("id")
+        info["serial"] = bounds.get("id")
+        info["device"] = _device_label(bounds.get("id"))
         info["screen"] = {"w": bounds["w"], "h": bounds["h"]}
     return info
+
+
+_LABELS: dict = {}
+
+
+def _device_label(serial):
+    """The phone's model ("SM S911B") instead of its serial, from the adb device listing.
+
+    Cached per serial: the status route polls, and the model never changes under a serial.
+    """
+    if serial not in _LABELS:
+        try:
+            detail = str(_send("session.detail"))
+        except Exception:
+            return serial
+        match = re.search(rf"^{re.escape(str(serial))}\s.*\bmodel:(\S+)", detail, re.M)
+        _LABELS[serial] = match.group(1).replace("_", " ") if match else serial
+    return _LABELS[serial]
 
 
 @_route("get", "/frame")
