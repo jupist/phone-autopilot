@@ -21,7 +21,10 @@ DESCRIPTION = (
     "Save, replay and repair phone routines: scripts that drive the user's phone with no model "
     "in the loop. Workflow: 1) explore the task with phone_exec first and keep the steps that "
     "worked; 2) write a clean script: call checkpoint(name, text=...) after every screen change, "
-    "read per-run values from PARAMS (never hardcode them), and end with done(); 3) action=save "
+    "read per-run values from PARAMS (never hardcode them), and end with done(). Games and other "
+    "canvas apps show no text: take a screenshot() with phone_exec, pass crops of stable UI as "
+    "refs on save, and check them with checkpoint(name, image='<ref>'); snap(region) + "
+    "changed(before, region) tells whether a move landed; 3) action=save "
     "(the user approves the code); 4) action=run to verify it end to end. A run that fails returns "
     "failed_checkpoint (expected text, what was seen, a screenshot path) and next_steps: look at "
     "the screenshot, fix the screen with phone_exec, then save a new version. Save only scripts "
@@ -45,6 +48,10 @@ SCHEMA = {
             "title": {"type": "string", "description": "save: human title, e.g. 'Claim daily reward'."},
             "app": {"type": "string", "description": "save: app id the routine drives, e.g. com.example.app."},
             "description": {"type": "string", "description": "save: what the routine does."},
+            "refs": {"type": "object",
+                     "description": "save: image references for canvas apps, "
+                                    "{ref_name: {screenshot: <png path from phone_exec>, region: [x, y, w, h]}}. "
+                                    "Crop stable UI (a title, a button), not content that changes."},
             "params": {"type": "object",
                        "description": "save: default values for PARAMS. run: values for this run only."},
             "timeout_s": {"type": "integer", "default": DEFAULT_TIMEOUT_S,
@@ -139,7 +146,7 @@ def _save(args: dict) -> dict:
     meta = engine.save_routine(
         args.get("name", ""), code, title=str(args.get("title") or ""),
         app=str(args.get("app") or ""), description=str(args.get("description") or ""),
-        params=args.get("params"),
+        params=args.get("params"), refs=args.get("refs"),
     )
     # The user approved this exact sha through the pre_tool_call prompt.
     approved = engine.approve(meta["name"], meta["sha256"])

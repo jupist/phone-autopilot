@@ -59,6 +59,8 @@ def shell(cmd, binary=False, timeout=60):
 
 
 def send(op, **kw):
+    if op == "screen.capture":
+        return _current()["image"], None
     print(f"SEND {op}", flush=True)
 
 

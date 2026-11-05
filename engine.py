@@ -123,7 +123,49 @@ def _new_meta(name: str) -> dict:
             "created_at": time.time(), "last_run": None}
 
 
-def save_routine(name, code, *, title="", app="", description="", params=None) -> dict:
+_REF_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+
+
+def _region(value) -> tuple[int, int, int, int]:
+    if not (isinstance(value, (list, tuple)) and len(value) == 4
+            and all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in value)):
+        raise RoutineError("a ref region is [x, y, w, h] in screenshot pixels")
+    x, y, w, h = value
+    if w < 8 or h < 8:
+        raise RoutineError("a ref region must be at least 8x8 pixels")
+    return x, y, w, h
+
+
+def _save_refs(name: str, refs: dict) -> dict:
+    """Crop each reference from the screenshot the agent took while exploring.
+
+    Canvas apps (most games) expose no text, so a routine verifies them by comparing a region
+    of the live screen with these crops instead.
+    """
+    from PIL import Image  # Hermes ships Pillow; only routines with image refs need it
+
+    if not isinstance(refs, dict):
+        raise RoutineError("refs must be an object of {name: {screenshot, region}}")
+    saved = {}
+    for ref, spec in refs.items():
+        if not _REF_NAME.fullmatch(str(ref)) or not isinstance(spec, dict):
+            raise RoutineError(f"bad ref {ref!r}: use a short lowercase name and {{screenshot, region}}")
+        x, y, w, h = _region(spec.get("region"))
+        shot = Path(str(spec.get("screenshot") or ""))
+        if not shot.is_file():
+            raise RoutineError(f"ref {ref!r}: screenshot {str(shot)!r} not found")
+        with Image.open(shot) as img:
+            if x + w > img.width or y + h > img.height:
+                raise RoutineError(f"ref {ref!r}: region falls outside the {img.width}x{img.height} screenshot")
+            crop = img.convert("RGB").crop((x, y, x + w, y + h))
+        out = _routine_dir(name) / "refs" / f"{ref}.png"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        crop.save(out)
+        saved[ref] = {"region": [x, y, w, h]}
+    return saved
+
+
+def save_routine(name, code, *, title="", app="", description="", params=None, refs=None) -> dict:
     """Write a new version of a routine. Saving never approves; the user does that."""
     validate_name(name)
     if not code.strip():
@@ -131,6 +173,8 @@ def save_routine(name, code, *, title="", app="", description="", params=None) -
     if params is not None and not isinstance(params, dict):
         raise RoutineError("params must be an object")
     meta = _read_meta(name) if _meta_path(name).exists() else _new_meta(name)
+    if refs:
+        meta["refs"] = {**meta.get("refs", {}), **_save_refs(name, refs)}
     meta.update(
         title=title or meta.get("title") or name,
         app=app or meta.get("app", ""),
@@ -284,7 +328,14 @@ def _build_script(code: str, params: dict, workdir: Path, allowed_apps=None) -> 
     prelude = _PRELUDE.read_text(encoding="utf-8")
     params_literal = repr(json.dumps(params))
     return (f"{guard_source(allowed_apps)}{prelude}\nPARAMS.update(json.loads({params_literal}))\n"
-            f"ROUTINE_DIR = {str(workdir)!r}\n{code}")
+            f"ROUTINE_DIR = {str(workdir)!r}\nREFS.update({_refs_for(workdir)!r})\n{code}")
+
+
+def _refs_for(workdir: Path) -> dict:
+    meta_path = workdir / "routine.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+    return {ref: {"path": str(workdir / "refs" / f"{ref}.png"), "region": spec["region"]}
+            for ref, spec in (meta.get("refs") or {}).items()}
 
 
 def _child_env() -> dict:
@@ -353,7 +404,7 @@ class _Run:
         self.record["events"].append(event)
         if event.get("event") == "checkpoint" and event.get("status") == "failed":
             self.record["failed_checkpoint"] = {k: event.get(k)
-                                                for k in ("name", "expected", "seen_text", "screenshot")}
+                                                for k in ("name", "expected", "seen_text", "screenshot", "similarity")}
         if event.get("event") == "guard":
             self.record["error"] = f"stopped: {event.get('app')} is not on the allowed apps list"
         if self.on_event is not None:

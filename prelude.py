@@ -1,8 +1,9 @@
 """Source prepended to every routine run, inside phone-harness.
 
 phone-harness execs it with its helpers as globals (find_text, screen, screenshot,
-current_app, ...). Only stdlib imports: a routine replays with no LLM and no extra
-packages. Events leave as `@@POCKET {json}` lines the engine parses; anything else
+current_app, ...). Only stdlib imports at the top: a routine replays with no LLM and no extra
+packages. Image checks import Pillow lazily (Hermes ships it), so text-only routines never need
+it. Events leave as `@@POCKET {json}` lines the engine parses; anything else
 the script prints is kept as plain output.
 """
 
@@ -10,7 +11,10 @@ import json
 import time
 
 PARAMS = {}
+REFS = {}
 POLL_S = 0.5
+MATCH = 0.92
+_PIXEL_TOLERANCE = 32
 
 
 class CheckpointMiss(Exception):
@@ -37,7 +41,61 @@ def _in_app(app):
     return _probe(lambda: app in str(current_app()))
 
 
-def _matches(text, any_of, app, exact):
+def _live_image():
+    from PIL import Image
+
+    path, _bounds = send("screen.capture")
+    with Image.open(path) as img:
+        return img.convert("RGB")
+
+
+def _similarity(a, b):
+    """Share of pixels that match, 1.0 for identical crops.
+
+    A pixel counts as different only past a per-pixel tolerance, so compression and
+    anti-aliasing noise never fail a check, while a different screen or tile (even one of
+    similar brightness) scores near zero instead of averaging out.
+    """
+    from PIL import ImageChops, ImageStat
+
+    a = a.convert("RGB").resize((48, 48))
+    b = b.convert("RGB").resize((48, 48))
+    diff = ImageChops.difference(a, b).convert("L").point(lambda v: 255 if v > _PIXEL_TOLERANCE else 0)
+    return 1.0 - ImageStat.Stat(diff).mean[0] / 255.0
+
+
+def _crop(img, region):
+    x, y, w, h = region
+    return img.crop((x, y, x + w, y + h))
+
+
+def looks_like(ref, threshold=MATCH):
+    """Similarity of the live screen to a saved ref, and whether it clears the threshold."""
+    from PIL import Image
+
+    spec = REFS[ref]
+    with Image.open(spec["path"]) as saved:
+        score = _similarity(_crop(_live_image(), spec["region"]), saved)
+    return score >= threshold, round(score, 3)
+
+
+def snap(region):
+    """A crop of the live screen, to compare later with changed()."""
+    return _crop(_live_image(), region)
+
+
+def changed(before, region, min_diff=0.02):
+    """True when a region no longer matches an earlier snap(): a move landed, a counter ticked."""
+    return 1.0 - _similarity(_crop(_live_image(), region), before) >= min_diff
+
+
+def _image_ok(image, threshold):
+    return _probe(lambda: looks_like(image, threshold)[0])
+
+
+def _matches(text, any_of, app, exact, image=None, threshold=MATCH):
+    if image is not None and not _image_ok(image, threshold):
+        return False
     if text is not None and not _seen(text, exact):
         return False
     if any_of is not None and not any(_seen(t, exact) for t in any_of):
@@ -45,9 +103,9 @@ def _matches(text, any_of, app, exact):
     return app is None or _in_app(app)
 
 
-def _expected(text, any_of, app):
+def _expected(text, any_of, app, image=None):
     """What the checkpoint wanted, in words, for the failure record."""
-    parts = []
+    parts = [f"screen matching ref {image!r}"] if image is not None else []
     if text is not None:
         parts.append(text)
     if any_of is not None:
@@ -70,7 +128,8 @@ def step(name):
     _emit("step", name=name)
 
 
-def checkpoint(name, text=None, any_of=None, app=None, timeout=10.0, exact=False):
+def checkpoint(name, text=None, any_of=None, app=None, timeout=10.0, exact=False, image=None,
+               threshold=MATCH):
     """Assert the expected screen, polling until it shows or the timeout passes.
 
     On a miss it emits what was on screen plus a screenshot, then raises, so the
@@ -78,11 +137,12 @@ def checkpoint(name, text=None, any_of=None, app=None, timeout=10.0, exact=False
     """
     _emit("checkpoint", name=name, status="started")
     deadline = time.time() + timeout
-    while not _matches(text, any_of, app, exact):
+    while not _matches(text, any_of, app, exact, image, threshold):
         if time.time() >= deadline:
             shot, seen = _evidence()
-            _emit("checkpoint", name=name, status="failed", expected=_expected(text, any_of, app),
-                  seen_text=seen, screenshot=shot)
+            extra = {"similarity": _probe(lambda: looks_like(image, threshold)[1])} if image else {}
+            _emit("checkpoint", name=name, status="failed", expected=_expected(text, any_of, app, image),
+                  seen_text=seen, screenshot=shot, **extra)
             raise CheckpointMiss(name)
         time.sleep(POLL_S)
     _emit("checkpoint", name=name, status="passed")

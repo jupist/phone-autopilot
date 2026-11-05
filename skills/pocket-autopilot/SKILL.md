@@ -69,3 +69,38 @@ done(claimed=True, account=PARAMS.get("account", "default"))
 ```
 
 Its defaults go in `params`, for example `{"account": "default"}`.
+
+## Games and other canvas apps
+
+Many games draw on a canvas, so `screen()` and `find_text()` return nothing. Verify them by image:
+
+1. While exploring, call `screenshot()` in `phone_exec`. It prints a PNG path. Look at the image and pick a
+   region of **stable** UI, such as the title or a button, as `[x, y, w, h]` in screenshot pixels. Scores,
+   timers and tiles change, so they make bad refs.
+2. On `save`, pass `refs`: `{"logo": {"screenshot": "<that path>", "region": [30, 490, 430, 160]}}`.
+3. In the script, `checkpoint("game-open", image="logo")` passes when the live region matches the ref
+   (`threshold=0.92` by default). A failed image checkpoint reports `similarity`.
+4. To confirm an action landed, `before = snap(region)`, act, then `changed(before, region)`.
+
+```python
+# 2048-moves: make a few moves in 2048 and confirm the board changed.
+ensure_device()
+open_app("com.tpcstld.twozerogame")
+checkpoint("game-open", image="logo", timeout=10)
+board = PARAMS["board"]            # [x, y, w, h] of the grid
+for direction in PARAMS["moves"]:  # e.g. ["up", "left", "down", "right"]
+    before = snap(board)
+    swipe(direction, at=(540, 1325))
+    wait(0.6)
+    if not changed(before, board):
+        print("no-op move:", direction)
+checkpoint("still-in-game", image="logo", timeout=5)
+done(moves=len(PARAMS["moves"]))
+```
+
+## App allowlist
+
+If the user set `allowed_apps` for this plugin, every `phone_exec` script and routine runs with a watchdog.
+When any other app comes to the front, the watchdog presses Home and stops the script. If you see
+`stopped: <app> is not on the allowed apps list`, do not retry in that app. Tell the user, and they can add
+it to the allowlist.
