@@ -36,6 +36,7 @@ _SECRET_SUFFIXES = ("_KEY", "_TOKEN", "_SECRET", "_PASSWORD")
 _NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,47}")
 _RUN_ID_RE = re.compile(r"\d{8}-\d{6}-[0-9a-f]{4}")
 _PRELUDE = Path(__file__).with_name("prelude.py")
+_GUARD = Path(__file__).with_name("guard.py")
 # One phone, so one routine at a time across every caller in this process.
 _RUN_LOCK = threading.Lock()
 log = logging.getLogger("pocket_autopilot")
@@ -256,14 +257,33 @@ def _read_code(name: str, meta: dict) -> str:
     return code
 
 
-def _build_script(code: str, params: dict, workdir: Path) -> str:
-    """Prelude, then params and folder, then the routine body.
+def configured_allowed_apps() -> list[str]:
+    """plugins.entries.pocket-autopilot.settings.allowed_apps from the active profile's config."""
+    try:
+        from hermes_cli.config import load_config_readonly
+    except ImportError:  # outside Hermes (unit tests): no allowlist configured
+        return []
+    entry = ((load_config_readonly() or {}).get("plugins", {}).get("entries", {}) or {}).get(PLUGIN) or {}
+    apps = (entry.get("settings") or {}).get("allowed_apps") or []
+    return [str(a) for a in apps] if isinstance(apps, list) else []
+
+
+def guard_source(allowed_apps) -> str:
+    """The app guard for a script, or "" when no allowlist is set (the guard is opt-in)."""
+    apps = sorted({str(a).strip() for a in (allowed_apps or ()) if str(a).strip()})
+    if not apps:
+        return ""
+    return f"ALLOWED_APPS = {apps!r}\n" + _GUARD.read_text(encoding="utf-8") + "\n"
+
+
+def _build_script(code: str, params: dict, workdir: Path, allowed_apps=None) -> str:
+    """Guard, prelude, then params and folder, then the routine body.
 
     Params travel as a JSON string literal so any JSON value survives (true/null included).
     """
     prelude = _PRELUDE.read_text(encoding="utf-8")
     params_literal = repr(json.dumps(params))
-    return (f"{prelude}\nPARAMS.update(json.loads({params_literal}))\n"
+    return (f"{guard_source(allowed_apps)}{prelude}\nPARAMS.update(json.loads({params_literal}))\n"
             f"ROUTINE_DIR = {str(workdir)!r}\n{code}")
 
 
@@ -334,6 +354,8 @@ class _Run:
         if event.get("event") == "checkpoint" and event.get("status") == "failed":
             self.record["failed_checkpoint"] = {k: event.get(k)
                                                 for k in ("name", "expected", "seen_text", "screenshot")}
+        if event.get("event") == "guard":
+            self.record["error"] = f"stopped: {event.get('app')} is not on the allowed apps list"
         if self.on_event is not None:
             try:
                 self.on_event(event)
@@ -412,9 +434,9 @@ def _finish(run: _Run, timed_out: bool, timeout_s: float) -> None:
 
 
 def _execute(name: str, meta: dict, code: str, params: dict, timeout_s: float,
-             on_event: Callable[[dict], None] | None) -> dict:
+             on_event: Callable[[dict], None] | None, allowed_apps=None) -> dict:
     workdir = _routine_dir(name)
-    script = _build_script(code, params, workdir)
+    script = _build_script(code, params, workdir, allowed_apps)
     started = time.time()
     record = {"run_id": _new_run_id(), "routine": name, "version": meta["version"], "ok": False,
               "started_at": started, "finished_at": 0.0, "duration_s": 0.0, "exit_code": None,
@@ -434,7 +456,8 @@ def _execute(name: str, meta: dict, code: str, params: dict, timeout_s: float,
     return record
 
 
-def run_routine(name, *, params=None, timeout_s=300, on_event=None, require_approved=True) -> dict:
+def run_routine(name, *, params=None, timeout_s=300, on_event=None, require_approved=True,
+                allowed_apps=None) -> dict:
     """Replay a routine on the phone and return its run record.
 
     Refuses unapproved routines: approval is the user's consent to this exact code.
@@ -447,6 +470,7 @@ def run_routine(name, *, params=None, timeout_s=300, on_event=None, require_appr
     if not _RUN_LOCK.acquire(timeout=LOCK_WAIT_S):
         raise RoutineError("phone busy: another routine is still running")
     try:
-        return _execute(name, meta, code, merged, timeout_s, on_event)
+        apps = configured_allowed_apps() if allowed_apps is None else allowed_apps
+        return _execute(name, meta, code, merged, timeout_s, on_event, apps)
     finally:
         _RUN_LOCK.release()

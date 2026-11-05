@@ -270,3 +270,16 @@ def test_schema_exposes_one_routine_tool_with_action_enum():
     assert schema["parameters"]["properties"]["action"]["enum"] == [
         "save", "run", "list", "show", "runs", "delete"]
     assert schema["parameters"]["required"] == ["action"]
+
+
+def test_phone_exec_gets_the_guard_prepended_when_an_allowlist_is_set(monkeypatch):
+    monkeypatch.setattr(engine, "configured_allowed_apps", lambda: ["com.example.app"], raising=False)
+    monkeypatch.setattr(engine, "guard_source", lambda apps: f"GUARD{apps}\n", raising=False)
+    directive = tool.on_pre_tool_call("phone_exec", {"code": "print(1)"})
+    assert directive == {"action": "modify", "args": {"code": "GUARD['com.example.app']\nprint(1)"}}
+
+
+def test_phone_exec_is_untouched_without_an_allowlist(monkeypatch):
+    monkeypatch.setattr(engine, "configured_allowed_apps", lambda: [], raising=False)
+    monkeypatch.setattr(engine, "guard_source", lambda apps: "", raising=False)
+    assert tool.on_pre_tool_call("phone_exec", {"code": "print(1)"}) is None

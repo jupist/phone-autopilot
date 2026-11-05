@@ -14,3 +14,12 @@ provides_tools:
   - routine
 provides_hooks:
   - pre_tool_call
+config_schema:
+  allowed_apps:
+    type: list
+    default: []
+    description: >-
+      Android package names the agent and routines may open, e.g. com.tpcstld.twozerogame.
+      When set, a watchdog sends the phone Home and stops the script within about a second
+      of any other app coming to the front (launchers and system dialogs are always allowed).
+      Empty means no restriction.

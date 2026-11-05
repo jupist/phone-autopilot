@@ -113,7 +113,19 @@ def _run_gate(args: dict) -> dict | None:
 _GATES: dict[str, Callable[[dict], dict | None]] = {"save": _save_gate, "run": _run_gate}
 
 
+def _guard_phone_exec(args: dict) -> dict | None:
+    # Prepending only restricts the script, so phone-harness's own approval of the original still
+    # describes everything the script may do.
+    guard = engine.guard_source(engine.configured_allowed_apps())
+    code = str(args.get("code") or "")
+    if not guard or not code.strip():
+        return None
+    return {"action": "modify", "args": {"code": guard + code}}
+
+
 def on_pre_tool_call(tool_name: str = "", args: dict | None = None, **kwargs: Any) -> dict | None:
+    if tool_name == "phone_exec":
+        return _guard_phone_exec(args or {})
     if tool_name != "routine":
         return None
     gate = _GATES.get(str((args or {}).get("action") or ""))

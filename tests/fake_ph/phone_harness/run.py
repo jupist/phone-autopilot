@@ -52,6 +52,16 @@ def wait_stable(timeout=6.0, interval=0.5, settle=2):
     return True
 
 
+def shell(cmd, binary=False, timeout=60):
+    if "android.intent.category.HOME" in cmd:
+        return "1 activities found:\n  Activity #0:\n    com.example.launcher/.Main\n"
+    return ""
+
+
+def send(op, **kw):
+    print(f"SEND {op}", flush=True)
+
+
 _code = sys.stdin.read()
 exec(_code, {
     "__name__": "__main__",
@@ -60,4 +70,6 @@ exec(_code, {
     "screenshot": screenshot,
     "current_app": current_app,
     "wait_stable": wait_stable,
+    "shell": shell,
+    "send": send,
 })
