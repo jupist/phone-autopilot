@@ -1,0 +1,16 @@
+name: pocket-autopilot
+version: 0.1.0
+manifest_version: 2
+description: Teach your phone a task once, replay it without the model, heal it when an app changes, and schedule it daily. Builds on phone-harness.
+author: Aman Jayesh
+license: MIT
+tags: [phone, android, iphone, automation, routines]
+requires_hermes: ">=0.21.6"
+requires_plugins:
+  - id: phone-harness
+python_dependencies:
+  - "phone-harness==0.3.3"
+provides_tools:
+  - routine
+provides_hooks:
+  - pre_tool_call
