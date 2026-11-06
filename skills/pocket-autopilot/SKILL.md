@@ -109,8 +109,13 @@ several steps per `phone_exec` call rather than one.
    not raw dumps.
 7. **Leave the phone tidy.** Close what you opened along the way (the notification shade, dialogs,
    keyboards) and end on the screen the routine is for.
-8. **A repair adds; it does not replace.** When a checkpoint fails on a state you had not seen, add a
-   branch for it and keep the path that already worked.
+8. **A repair adds what is new and removes what is no longer needed.** When a checkpoint fails on a
+   state you had not seen, add a branch for it and keep the path that already works. When a repair finds
+   a simpler way to answer a question (a system signal instead of navigating to look), delete the old way
+   rather than stacking the new one on top.
+9. **Keep only paths that have run.** A branch no run has ever taken is a guess. Make each fallback
+   happen once while you verify (put the phone in that state, then run), or leave it out and let a
+   future failure add it with real evidence.
 
 ```python
 # The playlist step from a routine: anchor, then visible → search.
