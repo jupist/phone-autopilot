@@ -10,6 +10,7 @@ the script prints is kept as plain output.
 import atexit
 import json
 import re
+import sys
 import threading
 import time
 
@@ -446,37 +447,51 @@ def _miss(name, expected, read_text=True, **extra):
     raise CheckpointMiss(name)
 
 
-def _failing_line(exc, lines):
-    """The routine line that was running when exc was raised: (number, its text)."""
-    tb, number = exc.__traceback__, None
-    if isinstance(exc, SyntaxError) and exc.filename == "routine.py":
-        number = exc.lineno
-    while tb is not None:
-        if tb.tb_frame.f_code.co_filename == "routine.py":
-            number = tb.tb_lineno
-        tb = tb.tb_next
-    if number is None or not 0 < number <= len(lines):
+_ROUTINE_FIRST_LINE = None  # the engine sets this: the script line where the routine body starts
+
+
+def _failing_line(exc):
+    """The routine line that was running when exc was raised: (number, its text) or (None, "").
+
+    The routine body follows the guard and this prelude in one script, so its frames are the ones
+    at or after _ROUTINE_FIRST_LINE; the last such frame is the line the routine was on.
+    """
+    if _ROUTINE_FIRST_LINE is None:
         return None, ""
-    return number, lines[number - 1].strip()
+    if isinstance(exc, SyntaxError):
+        script_line = exc.lineno
+    else:
+        script_line, tb = None, exc.__traceback__
+        while tb is not None:
+            if tb.tb_frame.f_globals is globals() and tb.tb_lineno >= _ROUTINE_FIRST_LINE:
+                script_line = tb.tb_lineno
+            tb = tb.tb_next
+    if script_line is None or script_line < _ROUTINE_FIRST_LINE:
+        return None, ""
+    number = script_line - _ROUTINE_FIRST_LINE + 1
+    try:
+        with open(ROUTINE_DIR + "/routine.py", encoding="utf-8") as source:
+            lines = source.read().splitlines()
+    except (NameError, OSError):
+        lines = []
+    return number, lines[number - 1].strip() if number <= len(lines) else ""
 
 
-def _run_routine(source):
-    """Run the routine body. Any error leaves the same record as a missed checkpoint.
+def _record_uncaught(kind, exc, tb):
+    """Any error that ends the routine leaves the same record as a missed checkpoint.
 
     A helper that raises (no such text to tap, an app that would not launch, a bug in the routine)
     is a failure a repair has to understand, so it gets the screenshot and screen text a checkpoint
-    miss gets, named after the routine line that raised.
+    miss gets, named after the routine line that raised. Python then prints the traceback as usual.
     """
-    lines = source.splitlines()
-    try:
-        exec(compile(source, "routine.py", "exec"), globals())
-    except (CheckpointMiss, KeyboardInterrupt, SystemExit):
-        raise
-    except Exception as exc:
-        number, text = _failing_line(exc, lines)
-        name = f"line {number}: {text[:80]}" if number else "routine"
-        raised = f"{type(exc).__name__}: {exc}"[:300]
-        _miss(name, f"this line to run, but it raised {raised}", raised=raised)
+    if not issubclass(kind, (CheckpointMiss, KeyboardInterrupt, SystemExit)):
+        number, text = _failing_line(exc)
+        name = f"line {number}: {text[:80]}".rstrip(": ") if number else "routine"
+        raised = f"{kind.__name__}: {exc}"[:300]
+        shot, seen = _evidence()
+        _emit("checkpoint", name=name, status="failed", expected=f"this line to run, but it raised {raised}",
+              seen_text=seen, screenshot=shot, raised=raised)
+    sys.__excepthook__(kind, exc, tb)
 
 
 def step(name):
@@ -573,3 +588,4 @@ if __name__ == "__main__":  # a routine run; the engine also loads this file to 
         if callable(globals().get(_name)):
             globals()[_name] = _timed(_name, globals()[_name])
     atexit.register(_report_cost)
+    sys.excepthook = _record_uncaught

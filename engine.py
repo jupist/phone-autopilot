@@ -460,16 +460,17 @@ def guard_source(allowed_apps) -> str:
 def _build_script(code: str, params: dict, workdir: Path, allowed_apps=None) -> str:
     """Guard, prelude, then params and folder, then the routine body.
 
-    The body runs through the prelude's _run_routine, so its errors name routine.py line numbers
-    and leave a screenshot like a missed checkpoint.
+    The marker line tells the prelude where the body starts, so an error that ends the run names
+    its routine.py line and leaves a screenshot like a missed checkpoint.
 
     Params travel as a JSON string literal so any JSON value survives (true/null included).
     """
     prelude = _PRELUDE.read_text(encoding="utf-8")
     params_literal = repr(json.dumps(params))
-    return (f"{guard_source(allowed_apps)}{prelude}\nPARAMS.update(json.loads({params_literal}))\n"
-            f"ROUTINE_DIR = {str(workdir)!r}\nREFS.update({_refs_for(workdir)!r})\n"
-            f"_run_routine({code!r})\n")
+    head = (f"{guard_source(allowed_apps)}{prelude}\nPARAMS.update(json.loads({params_literal}))\n"
+            f"ROUTINE_DIR = {str(workdir)!r}\nREFS.update({_refs_for(workdir)!r})\n")
+    first_line = head.count("\n") + 2  # the body starts on the line after the marker below
+    return f"{head}_ROUTINE_FIRST_LINE = {first_line}\n{code}"
 
 
 def _refs_for(workdir: Path) -> dict:

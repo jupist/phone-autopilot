@@ -32,3 +32,13 @@ def test_a_checkpoint_miss_is_reported_once_and_unchanged(engine, phone):
     failed = [e for e in record["events"] if e.get("status") == "failed"]
     assert [e["name"] for e in failed] == ["ready"]
     assert record["error"] == "checkpoint 'ready' failed"
+
+
+def test_an_error_inside_a_routine_function_names_the_line_in_that_function(engine, phone):
+    phone.set_frames([{"app": "com.example.app", "texts": ["Home"]}])
+    record = _run(engine, "def ready():\n"
+                          "    return {}['state']\n"
+                          "checkpoint('open', app='com.example.app')\n"
+                          "ready()\n")
+    assert record["failed_checkpoint"]["name"] == "line 2: return {}['state']"
+    assert record["failed_checkpoint"]["raised"] == "KeyError: 'state'"
