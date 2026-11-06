@@ -86,6 +86,14 @@ under 0.2s, and an image check under 1s. So decide state with the cheapest relia
 playing? ask the media session, not the screen), read the text once and reuse it, and when exploring, do
 several steps per `phone_exec` call rather than one.
 
+**Read where the time went.** Every run returns `time_spent`: each helper's total, costliest first, and
+the time outside any helper (startup, sleeps, your own code). After a run, look at the top lines. A
+helper called more often than the goal needs (asking the same question twice, a whole-screen
+`find_image` where `checkpoint(image=...)` on the known region answers it, a sleep where a condition
+would do) is the first thing to cut. `over_budget` means a helper itself was slower than it should
+ever be: that is the plugin or the phone link, not your routine, so tell the user rather than working
+around it.
+
 ### How to structure a routine
 
 1. **Check the goal before the path.** Begin every phase by asking whether its goal already holds (the

@@ -99,6 +99,25 @@ The list lives in `config.yaml` under
 `plugins.entries.pocket-autopilot.settings.allowed_apps` and also shows in
 Capabilities → Plugins. An empty list (the default) turns the guard off.
 
+## Where the time goes
+
+Every run measures each helper it calls and reports the totals, costliest
+first, plus the time spent outside any helper (startup, sleeps, the routine's
+own code):
+
+```
+find_image: 3.52s (1 call)
+media_state: 2.41s (4 calls, up to 0.66s each)
+outside helpers (startup, sleeps, the routine's own code): 0.40s
+```
+
+The agent gets this as `time_spent` with every run and uses it to cut calls
+the goal does not need. The run log in the pane shows it too. Helpers that
+should answer at once (a screen read, a shell command, an image search) have
+a budget; a call over it shows as `over_budget`, which points at the plugin
+or the phone link rather than the routine. The test suite holds the plugin's
+own image search to that budget on a phone-sized screen.
+
 ## How approval works
 
 - **Saving** a routine, and **running** one that has not been approved yet,

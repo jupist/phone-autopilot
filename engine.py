@@ -522,6 +522,48 @@ def _trim(value):
     return value
 
 
+TIME_SPENT_LINES = 6
+_COST_FIELDS = ("calls", "total_s", "max_s")
+
+
+def _helper_cost(helpers) -> dict:
+    """The cost event's per-helper totals; anything malformed (the line is script output) is dropped."""
+    def number(value):
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    if not isinstance(helpers, dict):
+        return {}
+    return {str(name): cost for name, cost in helpers.items()
+            if isinstance(cost, dict) and all(number(cost.get(f)) for f in _COST_FIELDS)
+            and number(cost.get("budget_s", 0))}
+
+
+def _time_spent(record: dict, helpers: dict) -> None:
+    """Turn the prelude's per-helper totals into where the run's time went, costliest first.
+
+    Whatever no helper accounts for (starting Python and phone-harness, sleeps, the routine's own
+    code) is its own line, so a run cannot hide a cost by doing it outside a helper.
+    """
+    ranked = sorted(helpers.items(), key=lambda item: -item[1]["total_s"])
+    lines = []
+    for name, cost in ranked[:TIME_SPENT_LINES]:
+        calls = cost["calls"]
+        detail = f"{calls} call" if calls == 1 else f"{calls} calls, up to {cost['max_s']:.2f}s each"
+        lines.append(f"{name}: {cost['total_s']:.2f}s ({detail})")
+    if len(ranked) > TIME_SPENT_LINES:
+        rest = sum(cost["total_s"] for _, cost in ranked[TIME_SPENT_LINES:])
+        lines.append(f"{len(ranked) - TIME_SPENT_LINES} other helpers: {rest:.2f}s")
+    outside = record["duration_s"] - sum(cost["total_s"] for cost in helpers.values())
+    if outside >= 0.05:
+        lines.append(f"outside helpers (startup, sleeps, the routine's own code): {outside:.2f}s")
+    record["time_spent"] = lines
+    slow = [f"{name} took up to {cost['max_s']:.2f}s per call; it should answer within {cost['budget_s']:g}s"
+            for name, cost in ranked if "budget_s" in cost and cost["max_s"] > cost["budget_s"]]
+    if slow:
+        record["over_budget"] = slow
+        log.warning("routine %s run %s: %s", record["routine"], record["run_id"], "; ".join(slow))
+
+
 def _parse_event(text: str) -> dict | None:
     try:
         event = json.loads(text)
@@ -540,6 +582,7 @@ class _Run:
         self.on_event = on_event
         self.stdout: deque[str] = deque(maxlen=TAIL_LINES)
         self.stderr: deque[str] = deque(maxlen=TAIL_LINES)
+        self.helper_cost: dict = {}
 
     def on_stdout(self, line: str) -> None:
         if line.startswith(EVENT_PREFIX):
@@ -550,6 +593,9 @@ class _Run:
         self.stdout.append(line)
 
     def _add_event(self, event: dict) -> None:
+        if event.get("event") == "cost":
+            self.helper_cost = _helper_cost(event.get("helpers"))
+            return
         if event.get("event") == "done":
             event = {k: _trim(v) for k, v in event.items()}
         event = {"t": round(time.time() - self.started, 3), **event}
@@ -624,6 +670,8 @@ def _finish(run: _Run, timed_out: bool, timeout_s: float) -> None:
     name, run_id = record["routine"], record["run_id"]
     record["finished_at"] = time.time()
     record["duration_s"] = round(record["finished_at"] - record["started_at"], 3)
+    if run.helper_cost:
+        _time_spent(record, run.helper_cost)
     record["output_tail"] = "\n".join(run.stdout)[-TAIL_CHARS:]
     record["stderr_tail"] = "\n".join(run.stderr)[-TAIL_CHARS:]
     if record["error"] is None:

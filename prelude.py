@@ -7,6 +7,7 @@ it. Events leave as `@@POCKET {json}` lines the engine parses; anything else
 the script prints is kept as plain output.
 """
 
+import atexit
 import json
 import re
 import time
@@ -483,3 +484,54 @@ def checkpoint(name, text=None, any_of=None, app=None, timeout=10.0, exact=False
 def done(**summary):
     """Report the routine's outcome; the last event of a successful run."""
     _emit("done", **summary)
+
+
+# Where the time goes. Every helper a routine calls is timed, counting only the outermost call (the
+# screen reads inside a checkpoint are the checkpoint's time), and the totals leave as one "cost"
+# event when the script ends, pass or fail. That is how a slow routine shows its cause instead of
+# just a long total. Helpers that answer at once carry a budget: a call far over it means that
+# helper or the phone link is slow, and the run names it. Helpers that wait (a checkpoint, a launch)
+# have none, since their time is the app's.
+_BUDGET_S = {
+    "screen": 3.0, "find_text": 3.0, "tap_text": 3.5, "tap_ui": 3.5, "screenshot": 1.5,
+    "shell": 1.0, "current_app": 0.5, "tap": 0.5, "long_press": 1.5, "swipe": 1.5, "press": 0.5,
+    "type_text": 3.0, "home": 0.5, "back": 0.5, "media_state": 1.0, "find_image": 1.5,
+    "looks_like": 1.5, "snap": 1.5, "changed": 1.5,
+}
+_WAITS = ("checkpoint", "open_app", "tap_image", "wait", "wait_for_text", "wait_for_app", "scroll_until")
+_COST = {}
+_DEPTH = [0]
+
+
+def _timed(name, fn):
+    def timed(*args, **kwargs):
+        _DEPTH[0] += 1
+        start = time.monotonic()
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _DEPTH[0] -= 1
+            if _DEPTH[0] == 0:
+                spent = time.monotonic() - start
+                entry = _COST.setdefault(name, [0, 0.0, 0.0])
+                entry[0] += 1
+                entry[1] += spent
+                entry[2] = max(entry[2], spent)
+
+    timed.__name__, timed.__doc__ = name, fn.__doc__
+    return timed
+
+
+def _report_cost():
+    helpers = {name: {"calls": calls, "total_s": round(total, 3), "max_s": round(longest, 3),
+                      **({"budget_s": _BUDGET_S[name]} if name in _BUDGET_S else {})}
+               for name, (calls, total, longest) in _COST.items()}
+    if helpers:
+        _emit("cost", helpers=helpers)
+
+
+if __name__ == "__main__":  # a routine run; the engine also loads this file to vet refs
+    for _name in (*_BUDGET_S, *_WAITS):
+        if callable(globals().get(_name)):
+            globals()[_name] = _timed(_name, globals()[_name])
+    atexit.register(_report_cost)

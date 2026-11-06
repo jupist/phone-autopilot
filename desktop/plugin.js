@@ -50,6 +50,7 @@ const APPS_MS = 5000
 const OK = 'var(--ui-green)'
 const BAD = 'var(--ui-red)'
 const MUTED_COLOR = 'var(--ui-text-tertiary)'
+const WARN = 'var(--ui-orange)'
 const MUTED = { color: MUTED_COLOR }
 const FAINT = { color: 'var(--ui-text-quaternary)' }
 const LINE = '1px solid var(--ui-stroke-tertiary)'
@@ -111,6 +112,15 @@ function describeEvent(p) {
   return null
 }
 
+/** Where a finished run's time went, with any helper that ran over its budget flagged. */
+function timeLines(payload) {
+  const list = (value) => (Array.isArray(value) ? value.map(String) : [])
+  return [
+    ...list(payload.over_budget).map((text) => ({ mark: '!', tone: WARN, text })),
+    ...list(payload.time_spent).map((text) => ({ mark: '⏱', tone: MUTED_COLOR, text })),
+  ]
+}
+
 function onRunStarted(payload) {
   changeRun(payload, (run) => run)
 }
@@ -141,6 +151,7 @@ function onRunFinished(payload) {
       : run.failed
     let next = { ...run, status: payload.ok ? 'passed' : 'failed', failed, error: payload.error || null }
     if (payload.error) next = addLine(next, { mark: '✗', tone: BAD, text: String(payload.error) })
+    next = timeLines(payload).reduce(addLine, next)
     return next
   })
   queryClient.invalidateQueries({ queryKey: [ID] })
