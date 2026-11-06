@@ -49,6 +49,34 @@ To run a routine every morning, add the blueprint:
 Other commands: `/routines` lists routines and their last run, and
 `/routines show <name>` prints the code and recent runs.
 
+## Games and other canvas apps
+
+Games draw on a canvas, so there is often no text for a checkpoint to read.
+Save an **image ref** instead: when saving, the agent passes
+`refs={"logo": [x, y, w, h]}` and the plugin crops that region from the
+current screen into `refs/logo.png`. A routine then checks
+`checkpoint("game open", image="logo")`, which compares the live crop against
+the saved one. To confirm a move landed, `before = snap(board)` then
+`changed(before, board)`.
+
+## App allowlist
+
+Set the apps routines and `phone_exec` may use:
+
+```yaml
+plugins:
+  entries:
+    pocket-autopilot:
+      settings:
+        allowed_apps:
+          - com.tpcstld.twozerogame
+```
+
+With a list set, every routine run and every `phone_exec` script gets a
+watchdog that checks the foreground app. If anything else comes to the front
+(apart from the launcher and system UI), it presses Home and stops the script.
+An empty list (the default) turns the guard off.
+
 ## How approval works
 
 - **Saving** a routine, and **running** one that has not been approved yet,
@@ -63,7 +91,9 @@ Other commands: `/routines` lists routines and their last run, and
 
 ## Desktop pane
 
-With Hermes Desktop, a **Pocket Autopilot** pane sits on the right:
+With Hermes Desktop (or `hermes webapp`), a **Pocket Autopilot** pane sits on
+the right. Like every user plugin, its Desktop half starts off: turn it on in
+**Capabilities → Plugins → Pocket Autopilot → Desktop**.
 
 - The live phone screen. Click to tap; the tap point is mapped onto the
   phone's real resolution. Home, Back and Recents buttons appear when the
@@ -87,6 +117,8 @@ routine's code.
 - The plugin makes **no network calls of its own** and has **no telemetry**.
   Any network use comes from Hermes or the model provider you configured.
 - scrcpy is launched only when you click Pop out, and only if it is installed.
+- With an allowlist set, the plugin's `pre_tool_call` hook prepends the guard
+  to `phone_exec` code (a `modify` directive) before the call runs.
 - Run environments do not receive variables whose names end in `_KEY`,
   `_TOKEN`, `_SECRET` or `_PASSWORD`.
 
@@ -118,8 +150,12 @@ routine's code.
 ## Development
 
 ```bash
+uv run --no-project --with pytest --with fastapi --with httpx --with pillow python -m pytest tests -q
 node tests/js/run_check.mjs
 ```
+
+The Python tests run routines against a fake `phone_harness` in
+`tests/fake_ph`, so they need no phone.
 
 The Desktop smoke test loads `desktop/plugin.js` under stubbed SDK modules and
 checks the contributions and run-log rendering. It needs Node 20.6 or later.
