@@ -75,3 +75,17 @@ def test_image_search_on_a_phone_sized_screen_fits_find_image_budget():
     spent = time.monotonic() - started
     assert (x, y) == (1301, 517) and score > 0.99
     assert spent < ns["_BUDGET_S"]["find_image"] - 0.7, f"image search took {spent:.2f}s"
+
+
+def test_the_guard_thread_polling_helpers_does_not_hide_the_routine_calls(engine, phone):
+    phone.set_frames([{"app": "com.example.app", "texts": []}])
+    record = _run(engine, "import threading, time\n"
+                          "def poll():\n"
+                          "    end = time.time() + 1.0\n"
+                          "    while time.time() < end:\n"
+                          "        current_app()\n"
+                          "threading.Thread(target=poll, daemon=True).start()\n"
+                          "for _ in range(20):\n    shell('true')\n    time.sleep(0.02)\n"
+                          "done()\n")
+    assert any(line.startswith("shell: ") and "20 calls" in line for line in record["time_spent"])
+    assert not any(line.startswith("current_app") for line in record["time_spent"])

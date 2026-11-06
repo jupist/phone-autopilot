@@ -10,6 +10,7 @@ the script prints is kept as plain output.
 import atexit
 import json
 import re
+import threading
 import time
 
 PARAMS = {}
@@ -524,9 +525,11 @@ def done(**summary):
 # event when the script ends, pass or fail. That is how a slow routine shows its cause instead of
 # just a long total. Helpers that answer at once carry a budget: a call far over it means that
 # helper or the phone link is slow, and the run names it. Helpers that wait (a checkpoint, a launch)
-# have none, since their time is the app's.
+# have none, since their time is the app's. A budget marks "something is wrong", not a typical
+# call: a text read is ~2.5s and up to ~4s on a busy screen, while a screen that never settles
+# takes ~12s.
 _BUDGET_S = {
-    "screen": 3.0, "find_text": 3.0, "tap_text": 3.5, "tap_ui": 3.5, "screenshot": 1.5,
+    "screen": 6.0, "find_text": 6.0, "tap_text": 6.0, "tap_ui": 6.0, "screenshot": 1.5,
     "shell": 1.0, "current_app": 0.5, "tap": 0.5, "long_press": 1.5, "swipe": 1.5, "press": 0.5,
     "type_text": 3.0, "home": 0.5, "back": 0.5, "media_state": 1.0, "find_image": 1.5,
     "looks_like": 1.5, "snap": 1.5, "changed": 1.5,
@@ -538,6 +541,8 @@ _DEPTH = [0]
 
 def _timed(name, fn):
     def timed(*args, **kwargs):
+        if threading.current_thread() is not threading.main_thread():
+            return fn(*args, **kwargs)  # the app guard's polling is not the routine's time
         _DEPTH[0] += 1
         start = time.monotonic()
         try:
