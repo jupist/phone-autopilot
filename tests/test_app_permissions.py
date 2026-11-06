@@ -18,10 +18,9 @@ DIALOG = "com.google.android.permissioncontroller"
 
 
 def _store_allowlist(module, monkeypatch, initial=()):
-    """Swap the config read/write for a list, so a grant is observable without Hermes."""
+    """The allowlist as a list: config.yaml's read, and the settings writer a surface passes in."""
     store = list(initial)
     monkeypatch.setattr(module, "configured_allowed_apps", lambda: list(store))
-    monkeypatch.setattr(module, "_save_allowed", lambda apps: store.__setitem__(slice(None), apps))
     events = []
     monkeypatch.setattr(module, "_broadcast", lambda event, payload: events.append((event, payload)))
     return store, events
@@ -30,7 +29,8 @@ def _store_allowlist(module, monkeypatch, initial=()):
 @pytest.fixture
 def allowlist(engine, monkeypatch):
     store, events = _store_allowlist(engine, monkeypatch, ["com.example.app"])
-    return types.SimpleNamespace(apps=store, events=events)
+    return types.SimpleNamespace(apps=store, events=events,
+                                 save=lambda apps: store.__setitem__(slice(None), apps))
 
 
 def _guarded_run(engine, phone, foreign_app):
@@ -58,13 +58,13 @@ def test_the_permission_dialog_is_left_for_the_user_and_never_allowlisted(engine
     assert "SEND nav.home" not in record["output_tail"]  # pressing Home would dismiss the dialog
     assert engine.app_requests()[0]["kind"] == "permission"
     with pytest.raises(engine.RoutineError, match="answered on the phone"):
-        engine.allow_app(DIALOG)
+        engine.allow_app(DIALOG, allowlist.save)
     assert DIALOG not in allowlist.apps
 
 
 def test_allowing_saves_the_app_and_clears_its_request(engine, allowlist):
     engine.note_blocked_app("com.spotify.music", source="phone_exec")
-    assert engine.allow_app("com.spotify.music") == ["com.example.app", "com.spotify.music"]
+    assert engine.allow_app("com.spotify.music", allowlist.save) == ["com.example.app", "com.spotify.music"]
     assert allowlist.apps == ["com.example.app", "com.spotify.music"]
     assert engine.app_requests() == []
     assert engine.note_blocked_app("com.spotify.music", source="phone_exec") is None
@@ -73,12 +73,12 @@ def test_allowing_saves_the_app_and_clears_its_request(engine, allowlist):
 @pytest.mark.parametrize("bad", ["", "spotify", "com.spotify.music; rm -rf /", "../etc", "com..x"])
 def test_only_package_names_can_be_allowed(engine, allowlist, bad):
     with pytest.raises(engine.RoutineError, match="package name"):
-        engine.allow_app(bad)
+        engine.allow_app(bad, allowlist.save)
     assert allowlist.apps == ["com.example.app"]
 
 
 def test_revoke_and_dismiss(engine, allowlist):
-    engine.revoke_app("com.example.app")
+    engine.revoke_app("com.example.app", allowlist.save)
     assert allowlist.apps == []
     engine.note_blocked_app("com.other.app", source="phone_exec")
     engine.dismiss_app_request("com.other.app")
@@ -91,8 +91,8 @@ def test_revoke_and_dismiss(engine, allowlist):
 @pytest.fixture
 def plugin(tmp_path, monkeypatch):
     _load_plugin()
-    monkeypatch.setenv("POCKET_AUTOPILOT_DATA", str(tmp_path / "pdata"))
     eng = importlib.import_module("pocket_autopilot.engine")
+    monkeypatch.setattr(eng, "data_dir", lambda: tmp_path / "pdata")
     store, _ = _store_allowlist(eng, monkeypatch)
     return types.SimpleNamespace(engine=eng, apps=store, tool=importlib.import_module("pocket_autopilot.tool"),
                                  commands=importlib.import_module("pocket_autopilot.commands"))
@@ -106,7 +106,9 @@ def test_a_guarded_phone_exec_result_queues_a_request(plugin):
 
 
 def test_slash_command_grants_lists_and_revokes(plugin):
-    handle = plugin.commands.handle_routines
+    def handle(raw):
+        return plugin.commands.handle_routines(
+            raw, set_config=lambda key, apps: plugin.apps.__setitem__(slice(None), apps))
     assert handle("allow com.spotify.music").startswith("Allowed com.spotify.music")
     assert plugin.apps == ["com.spotify.music"]
     assert "com.spotify.music" in handle("apps")
@@ -120,7 +122,7 @@ def test_the_routine_tool_has_no_way_to_grant_an_app(plugin):
     assert not any("allow" in a or "app" in a for a in actions)
 
 
-def test_pane_api_lists_allows_and_dismisses(engine, allowlist):
+def test_pane_api_lists_and_dismisses_and_an_allowed_app_stops_asking(engine, allowlist):
     from test_plugin_api import API_PATH
     spec = importlib.util.spec_from_file_location("pocket_autopilot_api_apps", API_PATH)
     api = importlib.util.module_from_spec(spec)
@@ -133,9 +135,10 @@ def test_pane_api_lists_allows_and_dismisses(engine, allowlist):
     engine.note_blocked_app("com.other.app", source="phone_exec")
     body = client.get(f"{PREFIX}/apps").json()
     assert [r["app"] for r in body["requests"]] == ["com.other.app", "com.spotify.music"]
-    assert client.post(f"{PREFIX}/apps/allow", json={"app": "com.spotify.music"}).json()["ok"] is True
-    assert "com.spotify.music" in allowlist.apps
+    # The pane allows through Hermes's plugin settings call; here the Settings form did it.
+    allowlist.apps.append("com.spotify.music")
+    assert [r["app"] for r in client.get(f"{PREFIX}/apps").json()["requests"]] == ["com.other.app"]
     assert client.post(f"{PREFIX}/apps/dismiss", json={"app": "com.other.app"}).json() == {"ok": True}
-    assert client.get(f"{PREFIX}/apps").json()["requests"] == []
-    bad = client.post(f"{PREFIX}/apps/allow", json={"app": DIALOG})
-    assert bad.status_code == 400 and bad.json()["ok"] is False
+    assert client.get(f"{PREFIX}/apps").json() == {"ok": True, "allowed": ["com.example.app", "com.spotify.music"],
+                                                    "requests": []}
+    assert client.post(f"{PREFIX}/apps/allow", json={"app": "com.x.y"}).status_code in (404, 405)

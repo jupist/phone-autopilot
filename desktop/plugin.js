@@ -28,9 +28,11 @@ import { useEffect, useState } from 'react'
 
 const ID = 'pocket-autopilot'
 const PANE_ID = `${ID}:phone`
+// The live view is the one fast poll. Everything else updates from plugin events; the slow polls
+// only catch what no event reports (a phone plugged in, a config edit by hand).
 const FRAME_MS = 700
-const STATUS_MS = 2500
-const ROUTINES_MS = 3000
+const STATUS_MS = 5000
+const ROUTINES_MS = 30000
 const RIPPLE_MS = 480
 const RUN_LIMIT = 6
 const LINE_LIMIT = 120
@@ -44,8 +46,10 @@ const RUN_EVENTS = {
 const APP_EVENTS = {
   requested: `plugin.${ID}.apps.requested`,
   changed: `plugin.${ID}.apps.changed`,
+  settings: `plugin.${ID}.settings.changed`,
 }
-const APPS_MS = 5000
+const ROUTINES_CHANGED = `plugin.${ID}.routines.changed`
+const APPS_MS = 30000
 
 const OK = 'var(--ui-green)'
 const BAD = 'var(--ui-red)'
@@ -462,10 +466,24 @@ function routinesSection(ctx, routines, { connected, runningNames }) {
 // Allow is a person's click: the agent has no tool that grants apps, and this route needs the
 // dashboard session token only the UI holds.
 
-async function answerApp(ctx, app, verb) {
-  const res = await call(ctx, `/apps/${verb}`, { method: 'POST', body: { app } })
+async function dismissApp(ctx, app) {
+  const res = await call(ctx, '/apps/dismiss', { method: 'POST', body: { app } })
   if (res?.ok) queryClient.invalidateQueries({ queryKey: [ID, 'apps'] })
-  else fail(res, `Could not update ${app}`)
+  else fail(res, `Could not dismiss ${app}`)
+}
+
+/** Save the allowlist the way Settings → Plugins does: plugins.manage settings, the same writer as
+ *  ctx.set_config. The request disappears once the app is allowed. */
+async function allowApp(app, allowed) {
+  try {
+    const res = await host.request('plugins.manage', {
+      action: 'settings', key: ID, values: { allowed_apps: [...new Set([...allowed, app])] },
+    })
+    if (res && res.ok === false) throw new Error(res.error || 'settings save failed')
+  } catch (error) {
+    fail({ error: error?.message || String(error) }, `Could not allow ${app}`)
+  }
+  queryClient.invalidateQueries({ queryKey: [ID, 'apps'] })
 }
 
 function whoTried(req) {
@@ -473,18 +491,18 @@ function whoTried(req) {
   return 'The agent'
 }
 
-function appRequestCard(ctx, req) {
+function appRequestCard(ctx, req, allowed) {
   const permission = req.kind === 'permission'
   const title = permission ? 'Android is asking for a permission' : `${whoTried(req)} tried to open an app`
   const body = permission
     ? 'Answer the dialog on your phone. A routine never taps it for you.'
     : 'It is not on your allowed apps, so the phone went Home and the script stopped.'
   const buttons = permission
-    ? [h(Button, { key: 'ok', variant: 'chip', size: 'xs', onClick: () => answerApp(ctx, req.app, 'dismiss') }, 'Done')]
+    ? [h(Button, { key: 'ok', variant: 'chip', size: 'xs', onClick: () => dismissApp(ctx, req.app) }, 'Done')]
     : [
-        h(Button, { key: 'allow', size: 'xs', 'aria-label': `Allow ${req.app}`, onClick: () => answerApp(ctx, req.app, 'allow') },
+        h(Button, { key: 'allow', size: 'xs', 'aria-label': `Allow ${req.app}`, onClick: () => allowApp(req.app, allowed) },
           h(icons.Check, { className: 'size-3' }), 'Allow'),
-        h(Button, { key: 'no', variant: 'chip', size: 'xs', onClick: () => answerApp(ctx, req.app, 'dismiss') }, 'Not now'),
+        h(Button, { key: 'no', variant: 'chip', size: 'xs', onClick: () => dismissApp(ctx, req.app) }, 'Not now'),
       ]
   return h(
     'div',
@@ -505,9 +523,10 @@ function appRequestCard(ctx, req) {
 
 function appRequestsSection(ctx, apps) {
   const requests = Array.isArray(apps.data?.requests) ? apps.data.requests : []
+  const allowed = Array.isArray(apps.data?.allowed) ? apps.data.allowed : []
   if (requests.length === 0) return null
   return h('section', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
-    requests.map((req) => appRequestCard(ctx, req)))
+    requests.map((req) => appRequestCard(ctx, req, allowed)))
 }
 
 function navButton(ctx, label, Icon, key, onFailed) {
@@ -832,6 +851,8 @@ export default {
       revealPane()
     })
     ctx.onEvent(APP_EVENTS.changed, () => queryClient.invalidateQueries({ queryKey: [ID, 'apps'] }))
+    ctx.onEvent(APP_EVENTS.settings, () => queryClient.invalidateQueries({ queryKey: [ID, 'apps'] }))
+    ctx.onEvent(ROUTINES_CHANGED, () => queryClient.invalidateQueries({ queryKey: [ID, 'routines'] }))
     ctx.addEventListener(document, 'visibilitychange', () => {
       if (document.visibilityState === 'visible') queryClient.invalidateQueries({ queryKey: [ID] })
     })

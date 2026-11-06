@@ -3,6 +3,8 @@ import json
 import time
 from pathlib import Path
 
+import importlib.util
+
 import pytest
 
 NAME = "daily-claim"
@@ -141,15 +143,18 @@ def test_runs_are_pruned_to_fifty(engine, phone, data_dir):
     assert (runs / "20000101-000000-0031.json").exists()
 
 
-def test_second_run_waits_then_reports_busy(engine, phone, monkeypatch):
+def test_a_run_from_another_copy_of_the_engine_waits_then_reports_busy(engine, phone, monkeypatch):
+    """The dashboard API loads its own engine module and cron runs elsewhere: one phone still."""
     monkeypatch.setattr(engine, "LOCK_WAIT_S", 0.2)
     _approved(engine)
-    engine._RUN_LOCK.acquire()
-    try:
+    spec = importlib.util.spec_from_file_location("pocket_autopilot_engine_copy", engine.__file__)
+    other = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(other)
+    monkeypatch.setattr(other, "data_dir", engine.data_dir)
+    with other._phone_lock(0):
         with pytest.raises(engine.RoutineError, match="busy"):
             engine.run_routine(NAME)
-    finally:
-        engine._RUN_LOCK.release()
+    assert "busy" not in (engine.run_routine(NAME)["error"] or "")  # free once the other run ends
 
 
 @pytest.mark.parametrize("name", ["", "Daily", "-claim", "../evil", "a/b", "a b", "a.b", "x" * 49, "claim\n"])

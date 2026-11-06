@@ -169,7 +169,8 @@ def test_other_routine_actions_pass_through(calls, args):
     assert tool.on_pre_tool_call(tool_name="routine", args=args) is None
 
 
-def test_other_tools_pass_through(calls):
+def test_other_tools_pass_through(calls, monkeypatch):
+    monkeypatch.setattr(engine, "configured_allowed_apps", lambda: [])
     assert tool.on_pre_tool_call(tool_name="phone_exec", args={"code": "print(1)"}) is None
     assert tool.on_pre_tool_call(tool_name="terminal", args={"command": "ls"}) is None
 
@@ -300,3 +301,10 @@ def test_phone_exec_is_untouched_without_an_allowlist(monkeypatch):
     monkeypatch.setattr(engine, "configured_allowed_apps", lambda: [], raising=False)
     monkeypatch.setattr(engine, "guard_source", lambda apps: "", raising=False)
     assert tool.on_pre_tool_call("phone_exec", {"code": "print(1)"}) is None
+
+
+def test_an_unexpected_error_comes_back_as_error_json(monkeypatch):
+    def broken():
+        raise OSError("disk full")
+    monkeypatch.setattr(engine, "list_routines", broken)
+    assert _call({"action": "list"}) == {"success": False, "error": "OSError: disk full"}

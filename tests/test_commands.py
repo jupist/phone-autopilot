@@ -5,7 +5,6 @@ import hashlib
 import importlib
 import importlib.util
 import sys
-import types
 from pathlib import Path
 
 import pytest
@@ -15,25 +14,10 @@ CODE = "ensure_device()\nopen_app('com.example.app')\ndone(ok=True)\n"
 SHA = hashlib.sha256(CODE.encode()).hexdigest()
 
 
-def _unimplemented(name):
-    def stub(*args, **kwargs):
-        raise NotImplementedError(f"engine.{name} is not stubbed in this test")
-    return stub
-
-
 def _load_plugin():
-    """Load the plugin dir as package `pocket_autopilot`, with a stub engine until engine.py exists."""
+    """Load the plugin dir as the package `pocket_autopilot`, the way Hermes imports it."""
     if "pocket_autopilot" in sys.modules:
         return
-    if not (PLUGIN_DIR / "engine.py").exists() and "pocket_autopilot.engine" not in sys.modules:
-        stub = types.ModuleType("pocket_autopilot.engine")
-        stub.PLUGIN = "pocket-autopilot"
-        stub.RoutineError = type("RoutineError", (ValueError,), {})
-        for name in ("validate_name", "list_routines", "get_routine", "save_routine", "approve",
-                     "is_approved", "code_sha256", "delete_routine", "list_runs", "get_run",
-                     "run_routine", "phone_harness_available", "data_dir"):
-            setattr(stub, name, _unimplemented(name))
-        sys.modules["pocket_autopilot.engine"] = stub
     spec = importlib.util.spec_from_file_location(
         "pocket_autopilot", PLUGIN_DIR / "__init__.py", submodule_search_locations=[str(PLUGIN_DIR)])
     module = importlib.util.module_from_spec(spec)
@@ -45,6 +29,13 @@ _load_plugin()
 commands = importlib.import_module("pocket_autopilot.commands")
 engine = importlib.import_module("pocket_autopilot.engine")
 plugin = sys.modules["pocket_autopilot"]
+
+
+def _routines(raw_args):
+    """/routines as a person types it; these tests never change the allowlist."""
+    def no_settings(key, value):
+        raise AssertionError(f"unexpected settings write {key}={value!r}")
+    return commands.handle_routines(raw_args, set_config=no_settings)
 
 
 def _meta(**overrides):
@@ -88,20 +79,20 @@ def test_no_args_lists_routines_with_approval_and_last_run(ran, monkeypatch):
         _meta(name="daily-claim", last_run={"ok": True, "finished_at": 1767258000.0}),
         _meta(name="inbox-zero", approved=False, approved_sha256=None, version=1, last_run=None),
     ])
-    out = commands.handle_routines("")
+    out = _routines("")
     assert "| daily-claim | 2 | ✓ |" in out
     assert "| inbox-zero | 1 | ✗ | never |" in out
     assert "✓ 20" in out  # last run ok, with its date
-    assert out == commands.handle_routines("list")
+    assert out == _routines("list")
 
 
 def test_empty_list_says_how_to_start(ran, monkeypatch):
     monkeypatch.setattr(engine, "list_routines", lambda: [])
-    assert "No routines yet" in commands.handle_routines("")
+    assert "No routines yet" in _routines("")
 
 
 def test_show_prints_code_and_recent_runs(ran):
-    out = commands.handle_routines("show daily-claim")
+    out = _routines("show daily-claim")
     assert "Claim daily reward (daily-claim), version 2, approved" in out
     assert "```python" in out and "open_app('com.example.app')" in out
     assert "20260101-090000-abcd" in out
@@ -111,14 +102,14 @@ def test_show_prints_code_and_recent_runs(ran):
 
 def test_run_refuses_an_unapproved_routine(ran, monkeypatch):
     monkeypatch.setattr(engine, "get_routine", lambda name: _meta(approved_sha256=None))
-    out = commands.handle_routines("run daily-claim")
+    out = _routines("run daily-claim")
     assert "not approved yet" in out
     assert "Ask the agent to run it once" in out
     assert ran == []  # run_routine never called
 
 
 def test_run_executes_an_approved_routine_and_summarises(ran):
-    out = commands.handle_routines("run daily-claim")
+    out = _routines("run daily-claim")
     assert ran == [("run", "daily-claim")]
     assert out.startswith("✓ daily-claim v2 passed in 4.2s (run 20260101-090000-abcd)")
 
@@ -127,7 +118,7 @@ def test_run_summary_names_the_failed_checkpoint_and_screenshot(ran, monkeypatch
     failed = _record(ok=False, failed_checkpoint={"name": "reward", "expected": "Claim",
                                                   "screenshot": "/data/runs/daily-claim/r.png"})
     monkeypatch.setattr(engine, "run_routine", lambda name, **kw: failed)
-    out = commands.handle_routines("run daily-claim")
+    out = _routines("run daily-claim")
     assert out.startswith("✗ daily-claim v2 failed")
     assert "checkpoint 'reward'" in out and "expected: Claim" in out
     assert "/data/runs/daily-claim/r.png" in out
@@ -138,19 +129,19 @@ def test_run_surfaces_engine_refusal_as_error_text(ran, monkeypatch):
     def refuse(name, **kwargs):
         raise engine.RoutineError("routine 'daily-claim' is not approved")
     monkeypatch.setattr(engine, "run_routine", refuse)
-    assert commands.handle_routines("run daily-claim") == "Error: routine 'daily-claim' is not approved"
+    assert _routines("run daily-claim") == "Error: routine 'daily-claim' is not approved"
 
 
 # ---- /routines delete, usage and errors -------------------------------------------------------
 
 def test_delete_removes_the_routine(ran):
-    assert commands.handle_routines("delete daily-claim") == "Deleted routine 'daily-claim'."
+    assert _routines("delete daily-claim") == "Deleted routine 'daily-claim'."
     assert ran == [("delete", "daily-claim")]
 
 
 @pytest.mark.parametrize("raw", ["run", "show", "delete", "run   ", "frobnicate", "frobnicate x"])
 def test_usage_for_missing_name_or_unknown_verb(ran, raw):
-    assert commands.handle_routines(raw) == commands.USAGE
+    assert _routines(raw) == commands.USAGE
     assert ran == []
 
 
@@ -158,7 +149,7 @@ def test_engine_error_on_show_is_reported(ran, monkeypatch):
     def missing(name):
         raise engine.RoutineError(f"routine '{name}' not found")
     monkeypatch.setattr(engine, "get_routine", missing)
-    assert commands.handle_routines("show nope") == "Error: routine 'nope' not found"
+    assert _routines("show nope") == "Error: routine 'nope' not found"
 
 
 # ---- registration ----------------------------------------------------------------------------
@@ -166,6 +157,10 @@ def test_engine_error_on_show_is_reported(ran, monkeypatch):
 class _FakeCtx:
     def __init__(self):
         self.tools, self.hooks, self.commands, self.blueprints, self.skills = [], [], [], [], []
+        self.settings = {}
+
+    def set_config(self, key, value):
+        self.settings[key] = value
 
     def register_tool(self, **kwargs):
         self.tools.append(kwargs)
@@ -197,7 +192,6 @@ def test_register_wires_tool_hook_command_blueprint_and_skill():
 
     [(command_name, command_kwargs)] = ctx.commands
     assert command_name == "routines"
-    assert command_kwargs["handler"] is commands.handle_routines
 
     [(key, blueprint)] = ctx.blueprints
     assert key == "daily-routine"
@@ -209,4 +203,17 @@ def test_register_wires_tool_hook_command_blueprint_and_skill():
     [(skill_name, skill_path, skill_kwargs)] = ctx.skills
     assert skill_name == "pocket-autopilot"
     assert skill_path.name == "SKILL.md" and skill_path.is_file()
-    assert skill_kwargs["description"]
+    # Hermes lists the skill by what it is given; the skill index shows 60 characters.
+    description = skill_kwargs["description"]
+    assert f'description: "{description}"' in skill_path.read_text()
+    assert len(description) <= 60 and description.endswith(".")
+
+
+def test_the_registered_command_saves_grants_through_the_plugin_settings_writer(monkeypatch):
+    monkeypatch.setattr(engine, "configured_allowed_apps", lambda: ["com.example.app"])
+    monkeypatch.setattr(engine, "dismiss_app_request", lambda app: None)
+    ctx = _FakeCtx()
+    plugin.register(ctx)
+    [(_, command_kwargs)] = ctx.commands
+    assert command_kwargs["handler"]("allow com.spotify.music").startswith("Allowed com.spotify.music")
+    assert ctx.settings == {"allowed_apps": ["com.example.app", "com.spotify.music"]}

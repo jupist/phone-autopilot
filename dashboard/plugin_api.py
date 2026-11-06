@@ -436,17 +436,6 @@ def list_apps():
     return {"ok": True, "allowed": eng.configured_allowed_apps(), "requests": eng.app_requests()}
 
 
-@_route("post", "/apps/allow")
-@_safe
-def allow_app(body: Optional[dict] = None):
-    eng = _engine()
-    try:
-        allowed = eng.allow_app(_app_field(body))
-    except eng.RoutineError as exc:
-        raise _ApiError(400, str(exc)) from exc
-    return {"ok": True, "allowed": allowed}
-
-
 @_route("post", "/apps/dismiss")
 @_safe
 def dismiss_app(body: Optional[dict] = None):

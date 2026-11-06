@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from typing import Callable
+from typing import Any, Callable
 
 from . import engine
 
@@ -81,36 +81,34 @@ def _apps(_name: str) -> str:
     allowed = engine.configured_allowed_apps()
     lines = ["Allowed apps: " + (", ".join(allowed) if allowed else "none (the app guard is off)")]
     for request in engine.app_requests():
-        lines.append(f"Waiting for you: {request['app']} ({engine.block_message(request['app'])})")
+        by = f"routine {request['routine']}" if request.get("routine") else "the agent"
+        lines.append(f"Waiting for you: {request['app']} (opened by {by}; /routines allow {request['app']})")
     return "\n".join(lines)
 
 
-def _allow(app: str) -> str:
-    # A slash command is typed by a person; the agent cannot run one, so this grant is the user's.
-    engine.allow_app(app)
-    return f"Allowed {app}. Routines and phone_exec scripts may now use it."
-
-
-def _revoke(app: str) -> str:
-    engine.revoke_app(app)
-    return f"Removed {app} from the allowed apps."
-
-
 _HANDLERS: dict[str, Callable[[str], str]] = {
-    "": _list, "list": _list, "show": _show, "run": _run, "delete": _delete,
-    "apps": _apps, "allow": _allow, "revoke": _revoke,
+    "": _list, "list": _list, "show": _show, "run": _run, "delete": _delete, "apps": _apps,
 }
-_NEEDS_NAME = frozenset({"show", "run", "delete", "allow", "revoke"})
+# Changes to the allowlist. A slash command is typed by a person (the agent cannot run one), so a
+# grant made here is the user's own.
+_GRANTS = {
+    "allow": (engine.allow_app, "Allowed {app}. Routines and phone_exec scripts may now use it."),
+    "revoke": (engine.revoke_app, "Removed {app} from the allowed apps."),
+}
+_NEEDS_NAME = frozenset({"show", "run", "delete", *_GRANTS})
 
 
-def handle_routines(raw_args: str) -> str:
+def handle_routines(raw_args: str, *, set_config: Callable[[str, Any], None]) -> str:
+    """The /routines handler. set_config is the plugin context's settings writer (ctx.set_config)."""
     verb, _, rest = (raw_args or "").strip().partition(" ")
-    verb = verb.lower()
-    handler = _HANDLERS.get(verb)
-    name = rest.strip()
-    if handler is None or (verb in _NEEDS_NAME and not name):
+    verb, name = verb.lower(), rest.strip()
+    if (verb not in _HANDLERS and verb not in _GRANTS) or (verb in _NEEDS_NAME and not name):
         return USAGE
     try:
-        return handler(name)
+        if verb in _GRANTS:
+            change, message = _GRANTS[verb]
+            change(name, lambda apps: set_config("allowed_apps", apps))
+            return message.format(app=name)
+        return _HANDLERS[verb](name)
     except engine.RoutineError as exc:
         return f"Error: {exc}"

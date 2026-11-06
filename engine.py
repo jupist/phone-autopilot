@@ -7,6 +7,7 @@ phone-harness's own Hermes plugin does, and streams the `@@POCKET` events it pri
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import hashlib
 import importlib.util
@@ -38,8 +39,6 @@ _NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,47}")
 _RUN_ID_RE = re.compile(r"\d{8}-\d{6}-[0-9a-f]{4}")
 _PRELUDE = Path(__file__).with_name("prelude.py")
 _GUARD = Path(__file__).with_name("guard.py")
-# One phone, so one routine at a time across every caller in this process.
-_RUN_LOCK = threading.Lock()
 log = logging.getLogger("pocket_autopilot")
 
 
@@ -52,15 +51,9 @@ class RoutineError(ValueError):
 
 
 def data_dir() -> Path:
-    """Plugin data folder: profile-aware inside Hermes, an env override for tests."""
-    override = os.environ.get("POCKET_AUTOPILOT_DATA")
-    if override:
-        return Path(override)
-    try:
-        from plugins.plugin_storage import plugin_data_dir
-    except ImportError:  # only reachable outside Hermes
-        return Path.home() / ".hermes" / "plugin-data" / PLUGIN
-    return Path(plugin_data_dir(PLUGIN))
+    """<HERMES_HOME>/plugin-data/pocket-autopilot/, resolved per call so it follows the active profile."""
+    from plugins.plugin_storage import plugin_data_dir
+    return plugin_data_dir(PLUGIN)
 
 
 def validate_name(name: str) -> str:
@@ -222,6 +215,7 @@ def save_routine(name, code, *, title="", app="", description="", params=None, r
     _write_atomic(folder / "versions" / f"{meta['version']}.py", code)
     _write_atomic(folder / "routine.py", code)
     _write_meta(name, meta)
+    _broadcast("routines.changed", {"routine": name})
     return _public(meta)
 
 
@@ -232,6 +226,7 @@ def approve(name, sha256: str) -> dict:
         raise RoutineError(f"routine {name!r} changed since it was shown; current sha256 is {meta.get('sha256')}")
     meta["approved_sha256"] = sha256
     _write_meta(name, meta)
+    _broadcast("routines.changed", {"routine": name})
     return _public(meta)
 
 
@@ -253,6 +248,7 @@ def delete_routine(name) -> None:
     _read_meta(name)  # raises when there is nothing to delete
     shutil.rmtree(_routine_dir(name))
     shutil.rmtree(_runs_dir(name), ignore_errors=True)
+    _broadcast("routines.changed", {"routine": name})
 
 
 def phone_harness_available() -> bool:
@@ -337,19 +333,17 @@ def _read_code(name: str, meta: dict) -> str:
 
 def configured_allowed_apps() -> list[str]:
     """plugins.entries.pocket-autopilot.settings.allowed_apps from the active profile's config."""
-    try:
-        from hermes_cli.config import load_config_readonly
-    except ImportError:  # outside Hermes (unit tests): no allowlist configured
-        return []
+    from hermes_cli.config import load_config_readonly
     entry = ((load_config_readonly() or {}).get("plugins", {}).get("entries", {}) or {}).get(PLUGIN) or {}
     apps = (entry.get("settings") or {}).get("allowed_apps") or []
     return [str(a) for a in apps] if isinstance(apps, list) else []
 
 
 # ---------------------------------------------------------------------------
-# App permissions. Only a person grants an app: the phone pane's Allow button (behind the
-# dashboard session token) and the /routines allow slash command. Never a tool, since a
-# tool call is approved automatically under /yolo and the agent would grant itself apps.
+# App permissions. Only a person grants an app: the phone pane's Allow button (saved through the
+# Desktop's plugin settings call, like the Settings form) and the /routines allow slash command
+# (saved through ctx.set_config). Never a tool, since a tool call is approved automatically under
+# /yolo and the agent would grant itself apps.
 
 # Android's "Allow <app> to ...?" dialog. Granting a permission is the user's call, so the
 # guard stops on it without pressing Home and asks the user to answer it on the phone.
@@ -370,12 +364,16 @@ def _requests_path() -> Path:
 
 
 def app_requests() -> list[dict]:
-    """Apps the guard stopped on that the user has not answered yet, newest first."""
+    """Apps the guard stopped on that the user has not answered yet, newest first.
+
+    An app allowed since (from any surface, the Settings form included) is answered.
+    """
     try:
         items = json.loads(_requests_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
-    return sorted((i for i in items if isinstance(i, dict) and i.get("app")),
+    allowed = set(configured_allowed_apps())
+    return sorted((i for i in items if isinstance(i, dict) and i.get("app") and i["app"] not in allowed),
                   key=lambda i: i.get("at", 0), reverse=True)
 
 
@@ -412,28 +410,26 @@ def dismiss_app_request(app: str) -> None:
     _broadcast("apps.changed", {"app": app})
 
 
-def _save_allowed(apps: list[str]) -> None:
-    from hermes_cli.plugins_state import save_plugin_setting
-    save_plugin_setting(PLUGIN, ("allowed_apps",), apps)
+def allow_app(app: str, save: Callable[[list[str]], None]) -> list[str]:
+    """Add an app to the allowlist through `save` (the plugin's settings writer).
 
-
-def allow_app(app: str) -> list[str]:
-    """Add an app to the allowlist. Callers must be acting on a person's own click or command."""
+    Callers must be acting on a person's own click or command.
+    """
     app = validate_package(app)
     if app in PERMISSION_DIALOGS:
         raise RoutineError("Android's permission dialog is answered on the phone, not allowlisted")
     apps = configured_allowed_apps()
     if app not in apps:
         apps = apps + [app]
-        _save_allowed(apps)
+        save(apps)
     dismiss_app_request(app)
     return apps
 
 
-def revoke_app(app: str) -> list[str]:
+def revoke_app(app: str, save: Callable[[list[str]], None]) -> list[str]:
     app = validate_package(app)
     apps = [a for a in configured_allowed_apps() if a != app]
-    _save_allowed(apps)
+    save(apps)
     _broadcast("apps.changed", {"app": app})
     return apps
 
@@ -715,6 +711,43 @@ def _execute(name: str, meta: dict, code: str, params: dict, timeout_s: float,
     return record
 
 
+def _try_lock(handle) -> bool:
+    try:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    return True
+
+
+@contextlib.contextmanager
+def _phone_lock(wait_s: float):
+    """One phone, so one routine at a time across every process (the agent, the pane, cron).
+
+    A lock file, not a threading lock: the dashboard API loads its own copy of this module and
+    scheduled runs happen in another process. The OS drops the lock if the holder dies.
+    """
+    path = data_dir() / "phone.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+b") as handle:
+        deadline = time.monotonic() + wait_s
+        while not _try_lock(handle):
+            if time.monotonic() >= deadline:
+                raise RoutineError("phone busy: another routine is still running")
+            time.sleep(0.2)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                import msvcrt
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+
 def run_routine(name, *, params=None, timeout_s=300, on_event=None, require_approved=True,
                 allowed_apps=None) -> dict:
     """Replay a routine on the phone and return its run record.
@@ -726,10 +759,6 @@ def run_routine(name, *, params=None, timeout_s=300, on_event=None, require_appr
         raise RoutineError(f"routine {name!r} v{meta['version']} is not approved; approve it before running")
     code = _read_code(name, meta)
     merged = {**meta.get("params", {}), **(params or {})}
-    if not _RUN_LOCK.acquire(timeout=LOCK_WAIT_S):
-        raise RoutineError("phone busy: another routine is still running")
-    try:
+    with _phone_lock(LOCK_WAIT_S):
         apps = configured_allowed_apps() if allowed_apps is None else allowed_apps
         return _execute(name, meta, code, merged, timeout_s, on_event, apps)
-    finally:
-        _RUN_LOCK.release()

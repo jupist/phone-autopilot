@@ -5,10 +5,9 @@ as a routine (approved by the user), and replays it through the `routine` tool o
 """
 from __future__ import annotations
 
-import logging
+import functools
 from pathlib import Path
 
-log = logging.getLogger(__name__)
 
 PLUGIN = "pocket-autopilot"
 SKILL_MD = Path(__file__).parent / "skills" / PLUGIN / "SKILL.md"
@@ -32,27 +31,11 @@ BLUEPRINT_PROMPT = (
 
 
 def _skill_description(path: Path) -> str:
+    """The `description:` line of SKILL.md. Hermes lists a plugin skill by what register_skill is given."""
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.startswith("description:"):
             return line.split(":", 1)[1].strip().strip("\"'")
-    return ""
-
-
-def _register_blueprint(ctx) -> None:
-    try:
-        ctx.register_automation_blueprint(
-            BLUEPRINT_KEY,
-            title="Run a phone routine daily",
-            description="Replay a saved phone routine at a set time, with no model in the loop. "
-                        "If it breaks, it reports the failed checkpoint and waits for you.",
-            category="phone",
-            schedule_template="{minute} {hour} * * {dow}",
-            prompt_template=BLUEPRINT_PROMPT,
-            slots=BLUEPRINT_SLOTS,
-            tags=["phone", "daily"],
-        )
-    except (TypeError, AttributeError) as exc:  # Hermes builds without automation blueprints
-        log.warning("pocket-autopilot: automation blueprints unavailable: %s", exc)
+    raise ValueError(f"{path} has no description")
 
 
 def register(ctx) -> None:
@@ -67,9 +50,19 @@ def register(ctx) -> None:
     ctx.register_hook("pre_tool_call", tool.on_pre_tool_call)
     ctx.register_hook("post_tool_call", tool.on_post_tool_call)
     ctx.register_command(
-        "routines", handler=commands.handle_routines,
+        "routines", handler=functools.partial(commands.handle_routines, set_config=ctx.set_config),
         description="List, run, show or delete phone routines; allow apps they may use",
         args_hint="[list | show <name> | run <name> | delete <name> | apps | allow <app> | revoke <app>]",
     )
-    _register_blueprint(ctx)
+    ctx.register_automation_blueprint(
+        BLUEPRINT_KEY,
+        title="Run a phone routine daily",
+        description="Replay a saved phone routine at a set time, with no model in the loop. "
+                    "If it breaks, it reports the failed checkpoint and waits for you.",
+        category="phone",
+        schedule_template="{minute} {hour} * * {dow}",
+        prompt_template=BLUEPRINT_PROMPT,
+        slots=BLUEPRINT_SLOTS,
+        tags=["phone", "daily"],
+    )
     ctx.register_skill(PLUGIN, SKILL_MD, description=_skill_description(SKILL_MD))

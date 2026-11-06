@@ -7,11 +7,13 @@ so it records that approval for the exact code the user saw.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Callable
 
 from . import engine, review
 
 PLUGIN = "pocket-autopilot"
+log = logging.getLogger("pocket_autopilot")
 DEFAULT_TIMEOUT_S = 300
 MAX_TIMEOUT_S = 900
 DEFAULT_RUNS_LIMIT = 20
@@ -244,3 +246,6 @@ def routine(args: dict | None, **kwargs: Any) -> str:
         return json.dumps(handler(args), ensure_ascii=False)
     except engine.RoutineError as exc:
         return json.dumps(_error(str(exc)), ensure_ascii=False)
+    except Exception as exc:  # a tool handler returns its errors (plugin guide: never raise)
+        log.exception("routine %s failed", action)
+        return json.dumps(_error(f"{type(exc).__name__}: {exc}"), ensure_ascii=False)
