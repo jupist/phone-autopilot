@@ -160,7 +160,8 @@ return nothing. Work with them by image:
    Pick something distinctive: saving refuses a crop that is nearly blank or that appears twice on the
    same screen, because a search for it could land on the wrong one. Include an icon's label or border.
 3. In the script, `checkpoint("game-open", image="logo")` passes when the region the ref was cut from
-   matches it (`threshold=0.92` by default); a failed image checkpoint reports `similarity`.
+   matches it (`threshold=0.92` by default); a failed image checkpoint reports `similarity`. The default
+   already tells one word from another; raising it makes checks fail on harmless rendering noise.
    `tap_image("play")` finds the ref anywhere on screen and taps its centre, and `find_image("play")`
    returns that point, or None, for branching. A `tap_image` miss fails like a checkpoint.
 4. To confirm an action landed, `before = snap(region)`, act, then

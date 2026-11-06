@@ -158,3 +158,21 @@ def test_an_image_check_ignores_a_two_pixel_shift(engine, phone, tmp_path):
     _label_routine(engine, tmp_path)
     record = engine.run_routine("labels", timeout_s=30)
     assert record["ok"] is True, record["failed_checkpoint"]
+
+
+def test_dotted_text_on_an_oled_style_screen_still_matches(engine, phone, tmp_path):
+    # Real crops from Focus Dock: the same "DAILY GOAL" title, its dot pattern shifted between shots.
+    from pathlib import Path
+    from PIL import Image
+    assets = Path(__file__).parent / "assets"
+    ref_shot, live_shot = tmp_path / "ref.png", tmp_path / "live.png"
+    for src, dst in ((assets / "dotted-ref.png", ref_shot), (assets / "dotted-live.png", live_shot)):
+        canvas = Image.new("RGB", (400, 120), (0, 0, 0))
+        canvas.paste(Image.open(src), (20, 30))
+        canvas.save(dst)
+    meta = engine.save_routine("dots", 'checkpoint("title", image="title", threshold=0.98, timeout=1)\ndone()\n',
+                               refs={"title": {"screenshot": str(ref_shot), "region": [20, 30, 310, 50]}})
+    engine.approve("dots", meta["sha256"])
+    phone.set_frames([{"app": "com.example.app", "texts": [], "image": str(live_shot)}])
+    record = engine.run_routine("dots", timeout_s=30)
+    assert record["ok"] is True, record["failed_checkpoint"]

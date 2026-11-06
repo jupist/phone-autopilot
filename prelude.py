@@ -90,19 +90,23 @@ def _live_image():
 # the images may sit a couple of pixels apart, so layout jitter is not a change; and the score is
 # taken against the "ink" (pixels that stand out from the background), so one different word on a
 # plain panel counts. Colour, not brightness: a green toggle and a grey one can be equally bright.
-_FIT_SIDE = 240
+_FIT_SIDE = 320
 _ALIGN_PX = 2
 _INK_FLOOR = 0.05
+# Some apps draw with a fine dot pattern (and shift it to protect OLED screens), so two shots of the
+# same text differ pixel by pixel. A whole-number downscale plus a light blur averages that out
+# while strokes stay legible.
+_SMOOTH = 1.0
 
 
 def _fit(img, size=None):
-    from PIL import Image
+    from PIL import Image, ImageFilter
 
     img = img.convert("RGB")
     if size is None:
-        scale = min(1.0, _FIT_SIDE / max(img.size))
-        size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
-    return img.resize(size, Image.BOX)
+        factor = -(-max(img.size) // _FIT_SIDE)
+        size = (max(1, img.width // factor), max(1, img.height // factor))
+    return img.resize(size, Image.BOX).filter(ImageFilter.GaussianBlur(_SMOOTH))
 
 
 def _over(img):
