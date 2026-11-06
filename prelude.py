@@ -132,11 +132,18 @@ def _ink(img):
     return _over(ImageChops.difference(img, background))
 
 
-def _outside(a, b):
-    """a's pixels with no close colour anywhere in b's 3x3 neighbourhood."""
-    from PIL import ImageChops, ImageFilter
+def _envelope(img):
+    """The darkest and brightest colour in each pixel's 3x3 neighbourhood."""
+    from PIL import ImageFilter
 
-    low, high = b.filter(ImageFilter.MinFilter(3)), b.filter(ImageFilter.MaxFilter(3))
+    return img.filter(ImageFilter.MinFilter(3)), img.filter(ImageFilter.MaxFilter(3))
+
+
+def _outside(a, envelope):
+    """a's pixels with no close colour anywhere in the other image's 3x3 neighbourhood."""
+    from PIL import ImageChops
+
+    low, high = envelope
     return _over(ImageChops.lighter(ImageChops.subtract(low, a), ImageChops.subtract(a, high)))
 
 
@@ -147,10 +154,14 @@ def _similarity(a, b):
     a = _fit(a)
     b = _fit(b, a.size)
     ink = _count(ImageChops.lighter(_ink(a), _ink(b)))
+    # Neighbourhood filters are the slow part, so each image is filtered once and the filtered
+    # result moves with it, instead of filtering again at every alignment offset.
+    a_env, b_env = _envelope(a), _envelope(b)
     differing = min(
-        _count(ImageChops.lighter(_outside(a, moved), _outside(moved, a)))
-        for moved in (ImageChops.offset(b, dx, dy)
-                      for dx in range(-_ALIGN_PX, _ALIGN_PX + 1) for dy in range(-_ALIGN_PX, _ALIGN_PX + 1)))
+        _count(ImageChops.lighter(
+            _outside(a, tuple(ImageChops.offset(e, dx, dy) for e in b_env)),
+            _outside(ImageChops.offset(b, dx, dy), a_env)))
+        for dx in range(-_ALIGN_PX, _ALIGN_PX + 1) for dy in range(-_ALIGN_PX, _ALIGN_PX + 1))
     return max(0.0, 1.0 - differing / max(ink, a.width * a.height * _INK_FLOOR))
 
 
@@ -246,11 +257,16 @@ _SEARCH_MAX_SIDE = 220
 _SEARCH_KEEP = 4
 
 
-def _coarse_hits(screen, ref, f):
-    from PIL import Image, ImageChops, ImageStat
+def _shrink(img, f):
+    from PIL import Image
 
-    small = screen.resize((max(1, screen.width // f), max(1, screen.height // f)), Image.BOX)
-    tpl = ref.resize((max(1, ref.width // f), max(1, ref.height // f)), Image.BOX)
+    return img if f == 1 else img.resize((max(1, img.width // f), max(1, img.height // f)), Image.BOX)
+
+
+def _coarse_hits(screen, ref, f):
+    from PIL import ImageChops, ImageStat
+
+    small, tpl = _shrink(screen, f), _shrink(ref, f)
     hits = []
     for y in range(small.height - tpl.height + 1):
         for x in range(small.width - tpl.width + 1):
@@ -259,17 +275,28 @@ def _coarse_hits(screen, ref, f):
     return sorted(hits)[:_SEARCH_KEEP]
 
 
-def _refine(screen, ref, x0, y0, f):
+def _refine(pyramid, x0, y0, f):
+    """Narrow a coarse hit at scale f down to the exact pixel, a few scales at a time.
+
+    Each pass searches ±f around the last hit at a finer scale, so the full-resolution pass only
+    looks a few pixels either side instead of across a whole coarse cell.
+    """
     from PIL import ImageChops, ImageStat
 
-    best = None
-    for y in range(max(0, y0 - f), min(screen.height - ref.height, y0 + f) + 1):
-        for x in range(max(0, x0 - f), min(screen.width - ref.width, x0 + f) + 1):
-            box = (x, y, x + ref.width, y + ref.height)
-            score = ImageStat.Stat(ImageChops.difference(screen.crop(box), ref)).sum[0]
-            if best is None or score < best[0]:
-                best = (score, x, y)
-    return best
+    while True:
+        g = max(1, f // 4)
+        screen, ref = pyramid(g)
+        best = None
+        for y in range(max(0, (y0 - f) // g), min(screen.height - ref.height, (y0 + f) // g) + 1):
+            for x in range(max(0, (x0 - f) // g), min(screen.width - ref.width, (x0 + f) // g) + 1):
+                box = (x, y, x + ref.width, y + ref.height)
+                score = ImageStat.Stat(ImageChops.difference(screen.crop(box), ref)).sum[0]
+                if best is None or score < best[0]:
+                    best = (score, x * g, y * g)
+        if best is None or g == 1:
+            return best
+        _, x0, y0 = best
+        f = g
 
 
 def _locate(screen, ref):
@@ -278,9 +305,16 @@ def _locate(screen, ref):
         return None
     gray, tpl = screen.convert("L"), ref.convert("L")
     f = max(1, min(ref.width, ref.height) // 12, -(-max(screen.size) // _SEARCH_MAX_SIDE))
+    scales = {}
+
+    def pyramid(g):
+        if g not in scales:
+            scales[g] = (_shrink(gray, g), _shrink(tpl, g))
+        return scales[g]
+
     found = []
     for _, x, y in _coarse_hits(gray, tpl, f):
-        refined = _refine(gray, tpl, x, y, f)
+        refined = _refine(pyramid, x, y, f)
         if refined is not None:
             raw, rx, ry = refined
             box = (rx, ry, rx + ref.width, ry + ref.height)
