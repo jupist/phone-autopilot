@@ -445,6 +445,39 @@ def _miss(name, expected, read_text=True, **extra):
     raise CheckpointMiss(name)
 
 
+def _failing_line(exc, lines):
+    """The routine line that was running when exc was raised: (number, its text)."""
+    tb, number = exc.__traceback__, None
+    if isinstance(exc, SyntaxError) and exc.filename == "routine.py":
+        number = exc.lineno
+    while tb is not None:
+        if tb.tb_frame.f_code.co_filename == "routine.py":
+            number = tb.tb_lineno
+        tb = tb.tb_next
+    if number is None or not 0 < number <= len(lines):
+        return None, ""
+    return number, lines[number - 1].strip()
+
+
+def _run_routine(source):
+    """Run the routine body. Any error leaves the same record as a missed checkpoint.
+
+    A helper that raises (no such text to tap, an app that would not launch, a bug in the routine)
+    is a failure a repair has to understand, so it gets the screenshot and screen text a checkpoint
+    miss gets, named after the routine line that raised.
+    """
+    lines = source.splitlines()
+    try:
+        exec(compile(source, "routine.py", "exec"), globals())
+    except (CheckpointMiss, KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:
+        number, text = _failing_line(exc, lines)
+        name = f"line {number}: {text[:80]}" if number else "routine"
+        raised = f"{type(exc).__name__}: {exc}"[:300]
+        _miss(name, f"this line to run, but it raised {raised}", raised=raised)
+
+
 def step(name):
     """Mark a phase of the routine; the step log shows these."""
     _emit("step", name=name)

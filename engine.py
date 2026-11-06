@@ -460,12 +460,16 @@ def guard_source(allowed_apps) -> str:
 def _build_script(code: str, params: dict, workdir: Path, allowed_apps=None) -> str:
     """Guard, prelude, then params and folder, then the routine body.
 
+    The body runs through the prelude's _run_routine, so its errors name routine.py line numbers
+    and leave a screenshot like a missed checkpoint.
+
     Params travel as a JSON string literal so any JSON value survives (true/null included).
     """
     prelude = _PRELUDE.read_text(encoding="utf-8")
     params_literal = repr(json.dumps(params))
     return (f"{guard_source(allowed_apps)}{prelude}\nPARAMS.update(json.loads({params_literal}))\n"
-            f"ROUTINE_DIR = {str(workdir)!r}\nREFS.update({_refs_for(workdir)!r})\n{code}")
+            f"ROUTINE_DIR = {str(workdir)!r}\nREFS.update({_refs_for(workdir)!r})\n"
+            f"_run_routine({code!r})\n")
 
 
 def _refs_for(workdir: Path) -> dict:
@@ -602,7 +606,7 @@ class _Run:
         self.record["events"].append(event)
         if event.get("event") == "checkpoint" and event.get("status") == "failed":
             self.record["failed_checkpoint"] = {k: event.get(k)
-                                                for k in ("name", "expected", "seen_text", "screenshot", "similarity")}
+                                                for k in ("name", "expected", "seen_text", "screenshot", "similarity", "raised")}
         if event.get("event") == "guard":
             self.record["error"] = block_message(str(event.get("app")))
             note_blocked_app(str(event.get("app")), source="routine", routine=self.name)
@@ -657,6 +661,8 @@ def _error_for(record: dict, timed_out: bool, timeout_s: float, stderr: deque) -
     if timed_out:
         return f"timed out after {timeout_s}s"
     failed = record["failed_checkpoint"]
+    if failed and failed.get("raised"):
+        return f"{failed['name']} raised {failed['raised']}"
     if failed:
         return f"checkpoint {failed['name']!r} failed"
     if record["exit_code"] != 0:

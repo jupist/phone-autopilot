@@ -38,7 +38,9 @@ is ready to run:
 
 Routines use `PARAMS` for values that change between runs, and every screen
 transition has a checkpoint so a failure stops at the right place with a
-screenshot.
+screenshot. A step that fails some other way (text that is not there to tap,
+an app that will not launch) leaves the same record: a screenshot, the visible
+text, and the routine line that raised.
 
 To run a routine every morning, add the blueprint:
 

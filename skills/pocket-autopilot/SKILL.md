@@ -110,7 +110,9 @@ around it.
 5. **Wait for conditions, not time, and bound every loop.** Use `checkpoint`, `wait_for_text` or
    `wait_stable` instead of fixed `wait(2)` calls, and give every scroll or retry loop a maximum. For a
    condition the screen cannot show, use `checkpoint(name, check=callable)`. Never use a bare `assert`
-   or the prelude's private helpers (`_emit`, `_miss`): only checkpoints leave a record a repair can use.
+   or the prelude's private helpers (`_emit`, `_miss`). Any error still stops the run with a screenshot
+   and the failing routine line, but a checkpoint before each action says what the screen should be,
+   so check for the content you are about to use (a result, not the query you typed).
 6. **Keep it short.** The user approves the routine before it runs, and the prompt has room for a
    summary and about 40 lines. A routine for a few goals should read in one screen; when it grows past
    that, look for a cheaper signal that makes the branches unnecessary. Keep `done()` to a short summary,
