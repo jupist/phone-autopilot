@@ -166,3 +166,65 @@ def test_open_app_returns_once_the_app_is_in_front():
     started = time.time()
     assert ns["open_app"]("com.example.app") == "com.example.app"
     assert time.time() - started < 1
+
+
+def test_check_condition_passes_once_true(capsys):
+    calls = iter([False, False, True])
+    ns = load_prelude(FakeScreen([[]]))
+    ns["checkpoint"]("dnd-on", check=lambda: next(calls), timeout=5)
+    assert events(capsys)[-1]["status"] == "passed"
+
+
+def test_check_condition_that_never_holds_fails_with_evidence(capsys):
+    def dnd_on():
+        return False
+    ns = load_prelude(FakeScreen([["Home"]], shot="/abs/shot.png"))
+    with pytest.raises(ns["CheckpointMiss"]):
+        ns["checkpoint"]("dnd-on", check=dnd_on, timeout=0.05)
+    failed = events(capsys)[-1]
+    assert failed["expected"] == "dnd_on() to be true"
+    assert failed["screenshot"] == "/abs/shot.png"
+
+
+MEDIA_DUMP = """MEDIA SESSION SERVICE (dumpsys media_session)
+    package=com.android.server.telecom
+    active=false
+    metadata: null
+      package=com.spotify.music
+      active=true
+      state=PlaybackState {state=PLAYING(3), position=1193, buffered position=0, speed=1.0}
+      metadata: size=18, description=This Is New, Mike Coen, This Is New
+"""
+NOTES_DUMP = """    NotificationRecord(0x01: pkg=com.chat.app user=UserHandle{0} id=1 tag=null importance=4
+                android.title=String (Mum)
+                android.text=String (secret message)
+    NotificationRecord(0x0f: pkg=com.spotify.music user=UserHandle{0} id=2 tag=null importance=2
+      flags=ONGOING_EVENT|NO_CLEAR
+                android.title=SpannableString (This Is New)
+                android.subText=SpannableString (Jazz for Study)
+                android.text=SpannableString (Mike Coen)
+"""
+
+
+def _media_ns(media=MEDIA_DUMP, notes=NOTES_DUMP):
+    ns = load_prelude(FakeScreen([[]]))
+    ns["shell"] = lambda cmd, **kw: media if "media_session" in cmd else notes
+    return ns
+
+
+def test_media_state_reads_what_is_playing_and_from_where():
+    assert _media_ns()["media_state"]() == {
+        "app": "com.spotify.music", "state": "PLAYING", "playing": True,
+        "title": "This Is New", "artist": "Mike Coen", "source": "Jazz for Study"}
+
+
+def test_media_state_never_returns_another_apps_notification():
+    state = _media_ns()["media_state"]("com.spotify.music")
+    assert "secret message" not in json.dumps(state) and "Mum" not in json.dumps(state)
+
+
+def test_media_state_without_a_session_or_notification():
+    assert _media_ns(media="MEDIA SESSION SERVICE\n")["media_state"]() is None
+    paused = MEDIA_DUMP.replace("PLAYING(3)", "PAUSED(2)")
+    state = _media_ns(media=paused, notes="")["media_state"]("com.spotify.music")
+    assert state["playing"] is False and state["title"] == "This Is New" and state["source"] == ""

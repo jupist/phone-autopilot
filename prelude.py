@@ -8,6 +8,7 @@ the script prints is kept as plain output.
 """
 
 import json
+import re
 import time
 
 PARAMS = {}
@@ -149,6 +150,66 @@ def _similarity(a, b):
     return max(0.0, 1.0 - differing / max(ink, a.width * a.height * _INK_FLOOR))
 
 
+# System state that the screen may not show. Read through adb, so it costs ~0.1s on any screen.
+
+_NOTE_FIELD = re.compile(r"^\s*android\.(title|text|subText)=\w+ \((.*)\)\s*$")
+
+
+def _media_sessions():
+    sessions, current = [], None
+    for line in str(shell("dumpsys media_session")).splitlines():
+        line = line.strip()
+        if line.startswith("package="):
+            current = {"app": line[len("package="):], "state": "", "description": ""}
+            sessions.append(current)
+        elif current is not None and line.startswith("state=PlaybackState {state="):
+            current["state"] = line.split("{state=", 1)[1].split("(", 1)[0]
+        elif current is not None and line.startswith("metadata:") and "description=" in line:
+            current["description"] = line.split("description=", 1)[1]
+    return [s for s in sessions if s["state"]]
+
+
+def _media_notification(app):
+    """title / text / subText of the app's own playback notification. Other apps' notifications
+    pass through this process unread and are never returned."""
+    fields, inside = {}, False
+    for line in str(shell("dumpsys notification --noredact")).splitlines():
+        if "NotificationRecord(" in line:
+            if fields:
+                break
+            inside = f"pkg={app} " in line
+        elif inside:
+            match = _NOTE_FIELD.match(line)
+            if match:
+                fields.setdefault(match.group(1), match.group(2))
+    return fields
+
+
+def media_state(app=None):
+    """What a media app is playing, read from the system: works on any screen, without opening it.
+
+    {"app", "state", "playing", "title", "artist", "source"}, where source is the playlist, album
+    or station the app says it is playing from ("" when it does not say). With no app, the session
+    that is playing, else the first one. None when nothing has a media session.
+    """
+    sessions = _media_sessions()
+    if app is not None:
+        sessions = [s for s in sessions if s["app"] == app]
+    if not sessions:
+        return None
+    session = next((s for s in sessions if s["state"] == "PLAYING"), sessions[0])
+    note = _media_notification(session["app"])
+    described = [part.strip() for part in session["description"].split(",")]
+    return {
+        "app": session["app"],
+        "state": session["state"],
+        "playing": session["state"] == "PLAYING",
+        "title": note.get("title") or (described[0] if described else ""),
+        "artist": note.get("text") or (described[1] if len(described) > 1 else ""),
+        "source": note.get("subText") or "",
+    }
+
+
 def _crop(img, region):
     x, y, w, h = region
     return img.crop((x, y, x + w, y + h))
@@ -275,9 +336,11 @@ def _image_ok(image, threshold):
     return _probe(lambda: looks_like(image, threshold)[0])
 
 
-def _matches(text, any_of, app, exact, image=None, threshold=MATCH, changed_from=None):
-    """Cheapest condition first: the foreground app (~0.06s), images (~0.7s), then one text read."""
+def _matches(text, any_of, app, exact, image=None, threshold=MATCH, changed_from=None, check=None):
+    """Cheapest condition first: the foreground app (~0.06s), a system check, images, then one text read."""
     if app is not None and not _in_app(app):
+        return False
+    if check is not None and not _probe(check):
         return False
     if changed_from is not None and not _probe(lambda: changed(*changed_from)):
         return False
@@ -296,9 +359,16 @@ def _matches(text, any_of, app, exact, image=None, threshold=MATCH, changed_from
     return any_of is None or any(_has(texts, t, exact) for t in any_of)
 
 
-def _expected(text, any_of, app, image=None, changed_from=None):
+def _check_name(check):
+    name = getattr(check, "__name__", "")
+    return f"{name}() to be true" if name and name != "<lambda>" else "the check= condition to be true"
+
+
+def _expected(text, any_of, app, image=None, changed_from=None, check=None):
     """What the checkpoint wanted, in words, for the failure record."""
     parts = [f"region {list(changed_from[1])} changed"] if changed_from is not None else []
+    if check is not None:
+        parts.append(_check_name(check))
     if image is not None:
         parts.append(f"screen matching ref {image!r}")
     if text is not None:
@@ -342,8 +412,12 @@ def step(name):
 
 
 def checkpoint(name, text=None, any_of=None, app=None, timeout=10.0, exact=False, image=None,
-               threshold=MATCH, changed_from=None):
+               threshold=MATCH, changed_from=None, check=None):
     """Assert the expected screen, polling until it shows or the timeout passes.
+
+    check=callable passes once it returns something truthy: any state the screen cannot show, read
+    from the system (`check=dnd_on`, `check=lambda: media_state()["playing"]`). It fails like any
+    other checkpoint, with a screenshot, so never use a bare assert for these.
 
     changed_from=(before, region) passes once that region differs from an earlier snap(), so
     "the move landed" fails like any other checkpoint, with a screenshot the agent can heal from.
@@ -355,15 +429,15 @@ def checkpoint(name, text=None, any_of=None, app=None, timeout=10.0, exact=False
     deadline = time.time() + timeout
     while True:
         try:
-            if _matches(text, any_of, app, exact, image, threshold, changed_from):
+            if _matches(text, any_of, app, exact, image, threshold, changed_from, check):
                 break
         except _NoText:
-            _miss(name, _expected(text, any_of, app, image, changed_from)
+            _miss(name, _expected(text, any_of, app, image, changed_from, check)
                   + " (this screen never settles, so it has no readable text: check it with an image ref)",
                   read_text=False)
         if time.time() >= deadline:
             extra = {"similarity": _probe(lambda: looks_like(image, threshold)[1])} if image else {}
-            _miss(name, _expected(text, any_of, app, image, changed_from), **extra)
+            _miss(name, _expected(text, any_of, app, image, changed_from, check), **extra)
         time.sleep(POLL_S)
     _emit("checkpoint", name=name, status="passed")
 
