@@ -4,12 +4,14 @@ manifest_version: 2
 description: Teach your phone a task once, replay it without the model, heal it when an app changes, and schedule it daily. Builds on phone-harness.
 author: Aman Jayesh
 license: MIT
-tags: [phone, android, iphone, automation, routines]
+homepage: https://github.com/jupist/pocket-autopilot
+tags: [phone, android, automation, routines]
 requires_hermes: ">=0.21.6"
 requires_plugins:
   - id: phone-harness
+    version_range: ">=0.1.0,<1"
 python_dependencies:
-  - "phone-harness==0.3.3"
+  - "phone-harness>=0.3.3,<0.4"
 provides_tools:
   - routine
 provides_hooks:

@@ -13,16 +13,23 @@ your routines and a step-by-step run log.
 ## Requirements
 
 - Hermes Agent `>=0.21.6`
-- The `phone-harness` plugin (installed automatically as a dependency)
-- Android with USB debugging enabled and `adb` on your PATH, **or** an iPhone
-  through iPhone Mirroring on macOS
+- The [phone-harness](https://github.com/phone-harness/phone-harness) plugin,
+  which gives the agent `phone_exec`. Pocket Autopilot installs the
+  `phone-harness` Python package it runs routines with, but not that plugin.
+- An Android phone with USB debugging on and `adb` on your PATH. phone-harness
+  also drives iPhones and cloud phones; Pocket Autopilot is built and tested
+  on Android, and its system helpers (`shell`, `media_state`) and app
+  allowlist need Android.
 - Optional: [`scrcpy`](https://github.com/Genymobile/scrcpy) for the pop-out window
 
 ## Install
 
 ```bash
-hermes plugins install <repo-url>
+hermes plugins install phone-harness
+hermes plugins install https://github.com/jupist/pocket-autopilot
 ```
+
+Once it is in the plugin catalog: `hermes plugins install pocket-autopilot`.
 
 ## Quick start
 
@@ -89,17 +96,18 @@ chat, type the same thing as a command:
 /routines apps
 ```
 
-Only you can allow an app: the agent has no tool for it, and the pane's
-routes need the dashboard session token that only the UI holds, so even with
-approvals off (`/yolo`) the plugin gives it no way to widen the list. It is a
-guard rail, not a sandbox: an agent with shell access could still edit
-`config.yaml` directly. When Android shows an
-"Allow … ?" permission dialog, the script stops and leaves the dialog for you
-to answer on the phone.
+Only you can allow an app. The agent has no tool for it, so even with
+approvals off (`/yolo`) the plugin gives it no way to widen the list. The
+Allow button saves through Hermes's plugin settings, the same call as the
+Settings form, and the slash command through the plugin's own settings
+writer. It is a guard rail, not a sandbox: an agent with shell access could
+still edit `config.yaml` directly. When Android shows an "Allow … ?"
+permission dialog, the script stops and leaves the dialog for you to answer
+on the phone.
 
 The list lives in `config.yaml` under
 `plugins.entries.pocket-autopilot.settings.allowed_apps` and also shows in
-Capabilities → Plugins. An empty list (the default) turns the guard off.
+Settings → Plugins. An empty list (the default) turns the guard off.
 
 ## Where the time goes
 
@@ -155,17 +163,36 @@ routine's code.
 
 ## Disclosure
 
-- Routines are Python code written by the model and run on **this computer**
-  through `phone-harness`, which taps and types on your **real phone**.
-- Screenshots taken during runs and the live view are stored under the plugin's
-  data directory in `HERMES_HOME` (`plugin-data/pocket-autopilot/`).
-- The plugin makes **no network calls of its own** and has **no telemetry**.
-  Any network use comes from Hermes or the model provider you configured.
-- scrcpy is launched only when you click Pop out, and only if it is installed.
-- With an allowlist set, the plugin's `pre_tool_call` hook prepends the guard
-  to `phone_exec` code (a `modify` directive) before the call runs.
-- Run environments do not receive variables whose names end in `_KEY`,
-  `_TOKEN`, `_SECRET` or `_PASSWORD`.
+- **Code it runs.** Routines are Python written by the model. Each run starts
+  a `python -m phone_harness.run` child process on **this computer** with your
+  user's permissions; it taps and types on your **real phone** over adb and runs
+  the routine's `shell()` commands there. You approve every saved version first,
+  and the approval summary lists every app, shell command and import. The
+  child runs in its own process group and is killed at the run's timeout
+  (5 minutes by default).
+- **Hooks.** `pre_tool_call` puts saves and unapproved runs through Hermes's
+  approval prompt and, when an allowlist is set, prepends the app watchdog to
+  `phone_exec` code (a `modify` directive). The watchdog is a thread inside the
+  script that polls the foreground app. `post_tool_call` reads `phone_exec`
+  output to raise an Allow card for a blocked app.
+- **Files.** It writes under `<HERMES_HOME>/plugin-data/pocket-autopilot/`:
+  routines and their versions, image refs, run records with failure
+  screenshots, pending app requests and a lock file. Outside it, it reads
+  `config.yaml` (`allowed_apps`), the screenshot files the agent names when
+  saving image refs, and phone-harness's own failure screenshots, which it
+  copies into the run record. It changes `config.yaml` only through Hermes's
+  plugin settings writers, when you allow or revoke an app. The live view is
+  kept in memory, not on disk.
+- **Network.** The plugin makes no network calls of its own. With a phone
+  over USB, nothing leaves this computer. With a phone-harness cloud phone,
+  routines and the live view reach it through phone-harness's own connection
+  to Phone Harness Cloud.
+- **Telemetry.** None of its own. phone-harness has PostHog telemetry; routine
+  runs start it with `DO_NOT_TRACK=1`, so it stays off for them.
+- **Other processes.** `scrcpy` starts only when you click Pop out, if it is
+  installed, and keeps running until you close its window.
+- **Secrets.** Run environments do not receive variables whose names end in
+  `_KEY`, `_TOKEN`, `_SECRET` or `_PASSWORD`. The plugin stores no credentials.
 
 ## How it works
 
@@ -176,7 +203,7 @@ routine's code.
                     engine: prelude + routine.py
                               │  subprocess
                               ▼
-                 phone_harness.run ──► phone (adb / iPhone Mirroring)
+                 phone_harness.run ──► phone (adb)
                               │
               @@POCKET events on stdout
                               │
@@ -195,8 +222,10 @@ routine's code.
 ## Development
 
 ```bash
-uv run --no-project --with pytest --with fastapi --with httpx --with pillow python -m pytest tests -q
+uv run --no-project --with pytest --with fastapi --with httpx --with pillow \
+  python -m pytest tests -q
 node tests/js/run_check.mjs
+hermes plugins validate . --install-deps
 ```
 
 The Python tests run routines against a fake `phone_harness` in
