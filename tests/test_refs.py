@@ -126,3 +126,35 @@ def test_a_ref_that_appears_twice_is_refused(engine, tmp_path):
     with pytest.raises(engine.RoutineError, match=r"also appears at \[5, 195\]"):
         engine.save_routine("game", "done()", refs={"logo": {"screenshot": str(tmp_path / "twins.png"),
                                                              "region": [5, 15, 60, 40]}})
+
+
+def _label(path, word, at=(20, 40)):
+    from PIL import Image, ImageDraw, ImageFont
+    img = Image.new("RGB", (400, 200), (12, 12, 12))
+    ImageDraw.Draw(img).text(at, word, fill=(200, 200, 200), font=ImageFont.load_default(size=48))
+    img.save(path)
+    return str(path)
+
+
+def _label_routine(engine, tmp_path):
+    shot = _label(tmp_path / "ref.png", "Calendar")
+    meta = engine.save_routine("labels", 'checkpoint("on-calendar", image="title", timeout=1)\ndone()\n',
+                               refs={"title": {"screenshot": shot, "region": [10, 30, 300, 80]}})
+    engine.approve("labels", meta["sha256"])
+
+
+def test_an_image_check_tells_one_word_from_another(engine, phone, tmp_path):
+    # Same panel, same place, one word different: the old 48x48 compare called these 0.75 alike.
+    phone.set_frames([{"app": "com.example.app", "texts": [], "image": _label(tmp_path / "live.png", "Weather")}])
+    _label_routine(engine, tmp_path)
+    record = engine.run_routine("labels", timeout_s=30)
+    assert record["ok"] is False
+    assert record["failed_checkpoint"]["similarity"] < 0.6
+
+
+def test_an_image_check_ignores_a_two_pixel_shift(engine, phone, tmp_path):
+    live = _label(tmp_path / "live.png", "Calendar", at=(22, 42))
+    phone.set_frames([{"app": "com.example.app", "texts": [], "image": live}])
+    _label_routine(engine, tmp_path)
+    record = engine.run_routine("labels", timeout_s=30)
+    assert record["ok"] is True, record["failed_checkpoint"]

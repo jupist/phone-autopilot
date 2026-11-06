@@ -84,19 +84,69 @@ def _live_image():
     return _capture()[0]
 
 
+# Image comparison. Sized so text stays legible (a 48x48 thumbnail made any two labels look alike);
+# a pixel differs only when nothing within a pixel of it in the other image is close in colour, and
+# the images may sit a couple of pixels apart, so layout jitter is not a change; and the score is
+# taken against the "ink" (pixels that stand out from the background), so one different word on a
+# plain panel counts. Colour, not brightness: a green toggle and a grey one can be equally bright.
+_FIT_SIDE = 240
+_ALIGN_PX = 2
+_INK_FLOOR = 0.05
+
+
+def _fit(img, size=None):
+    from PIL import Image
+
+    img = img.convert("RGB")
+    if size is None:
+        scale = min(1.0, _FIT_SIDE / max(img.size))
+        size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
+    return img.resize(size, Image.BOX)
+
+
+def _over(img):
+    """Pixels where any colour channel exceeds the tolerance, as a 0/255 mask."""
+    from PIL import ImageChops
+
+    r, g, b = img.split()
+    return ImageChops.lighter(ImageChops.lighter(r, g), b).point(lambda v: 255 if v > _PIXEL_TOLERANCE else 0)
+
+
+def _count(mask):
+    from PIL import ImageStat
+
+    return ImageStat.Stat(mask).sum[0] / 255
+
+
+def _ink(img):
+    from PIL import Image, ImageChops
+
+    pixels = sorted(img.get_flattened_data() if hasattr(img, "get_flattened_data") else img.getdata(),
+                    key=sum)
+    background = Image.new("RGB", img.size, pixels[len(pixels) // 2])
+    return _over(ImageChops.difference(img, background))
+
+
+def _outside(a, b):
+    """a's pixels with no close colour anywhere in b's 3x3 neighbourhood."""
+    from PIL import ImageChops, ImageFilter
+
+    low, high = b.filter(ImageFilter.MinFilter(3)), b.filter(ImageFilter.MaxFilter(3))
+    return _over(ImageChops.lighter(ImageChops.subtract(low, a), ImageChops.subtract(a, high)))
+
+
 def _similarity(a, b):
-    """Share of pixels that match, 1.0 for identical crops.
+    """1.0 for the same content, low for different content, even when only a word differs."""
+    from PIL import ImageChops
 
-    A pixel counts as different only past a per-pixel tolerance, so compression and
-    anti-aliasing noise never fail a check, while a different screen or tile (even one of
-    similar brightness) scores near zero instead of averaging out.
-    """
-    from PIL import ImageChops, ImageStat
-
-    a = a.convert("RGB").resize((48, 48))
-    b = b.convert("RGB").resize((48, 48))
-    diff = ImageChops.difference(a, b).convert("L").point(lambda v: 255 if v > _PIXEL_TOLERANCE else 0)
-    return 1.0 - ImageStat.Stat(diff).mean[0] / 255.0
+    a = _fit(a)
+    b = _fit(b, a.size)
+    ink = _count(ImageChops.lighter(_ink(a), _ink(b)))
+    differing = min(
+        _count(ImageChops.lighter(_outside(a, moved), _outside(moved, a)))
+        for moved in (ImageChops.offset(b, dx, dy)
+                      for dx in range(-_ALIGN_PX, _ALIGN_PX + 1) for dy in range(-_ALIGN_PX, _ALIGN_PX + 1)))
+    return max(0.0, 1.0 - differing / max(ink, a.width * a.height * _INK_FLOOR))
 
 
 def _crop(img, region):
@@ -167,10 +217,13 @@ def _locate(screen, ref):
     for _, x, y in _coarse_hits(gray, tpl, f):
         refined = _refine(gray, tpl, x, y, f)
         if refined is not None:
-            _, rx, ry = refined
+            raw, rx, ry = refined
             box = (rx, ry, rx + ref.width, ry + ref.height)
-            found.append((_similarity(screen.crop(box), ref), rx, ry))
-    return max(found) if found else None
+            found.append((_similarity(screen.crop(box), ref), -raw, rx, ry))
+    if not found:
+        return None
+    score, _, x, y = max(found)  # equal scores: the exact pixel match wins
+    return score, x, y
 
 
 def _to_device(x, y, img, bounds):
