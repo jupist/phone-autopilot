@@ -23,7 +23,7 @@ def test_guard_stops_a_run_that_reaches_a_disallowed_app(engine, phone):
     started = time.time()
     record = engine.run_routine("guarded", timeout_s=30, allowed_apps=["com.example.app"])
     assert record["ok"] is False
-    assert record["error"] == "stopped: com.chat.messenger is not on the allowed apps list"
+    assert record["error"].startswith("stopped: com.chat.messenger is not on the allowed apps list")
     assert "SEND nav.home" in record["output_tail"]
     assert "FINISHED" not in record["output_tail"]
     assert time.time() - started < 10

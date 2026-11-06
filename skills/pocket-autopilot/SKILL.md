@@ -151,6 +151,11 @@ done(moves=len(PARAMS["moves"]))
 ## App allowlist
 
 If the user set `allowed_apps` for this plugin, every `phone_exec` script and routine runs with a watchdog.
-When any other app comes to the front, the watchdog presses Home and stops the script. If you see
-`stopped: <app> is not on the allowed apps list`, do not retry in that app. Tell the user, and they can add
-it to the allowlist.
+When any other app comes to the front, the watchdog presses Home and stops the script, and the phone pane
+shows the user an Allow card for that app.
+
+- `stopped: <app> is not on the allowed apps list`: tell the user which app and why the task needs it. They
+  allow it with the card's Allow button or by typing `/routines allow <app>`. You cannot grant apps, so do
+  not retry in that app until they say it is allowed.
+- `stopped: Android is asking for a permission`: an "Allow ... ?" dialog is up. Ask the user to answer it on
+  the phone. Never tap a permission dialog from a script.

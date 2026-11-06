@@ -312,6 +312,109 @@ def configured_allowed_apps() -> list[str]:
     return [str(a) for a in apps] if isinstance(apps, list) else []
 
 
+# ---------------------------------------------------------------------------
+# App permissions. Only a person grants an app: the phone pane's Allow button (behind the
+# dashboard session token) and the /routines allow slash command. Never a tool, since a
+# tool call is approved automatically under /yolo and the agent would grant itself apps.
+
+# Android's "Allow <app> to ...?" dialog. Granting a permission is the user's call, so the
+# guard stops on it without pressing Home and asks the user to answer it on the phone.
+PERMISSION_DIALOGS = frozenset({"com.google.android.permissioncontroller",
+                                "com.android.permissioncontroller"})
+_PACKAGE_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+")
+
+
+def validate_package(app: str) -> str:
+    app = str(app or "").strip()
+    if not _PACKAGE_RE.fullmatch(app) or len(app) > 200:
+        raise RoutineError(f"{app!r} is not an Android package name (like com.spotify.music)")
+    return app
+
+
+def _requests_path() -> Path:
+    return data_dir() / "app_requests.json"
+
+
+def app_requests() -> list[dict]:
+    """Apps the guard stopped on that the user has not answered yet, newest first."""
+    try:
+        items = json.loads(_requests_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return sorted((i for i in items if isinstance(i, dict) and i.get("app")),
+                  key=lambda i: i.get("at", 0), reverse=True)
+
+
+def _write_requests(items: list[dict]) -> None:
+    _write_atomic(_requests_path(), json.dumps(items, indent=2))
+
+
+def block_message(app: str) -> str:
+    """What the agent and the user read when the guard stops a script."""
+    if app in PERMISSION_DIALOGS:
+        return ("stopped: Android is asking for a permission. The user must answer that dialog "
+                "on the phone; never tap it from a script")
+    return (f"stopped: {app} is not on the allowed apps list. Ask the user to allow it with "
+            f"Allow in the phone pane, or by typing /routines allow {app}")
+
+
+def note_blocked_app(app: str, *, source: str, routine: str = "") -> dict | None:
+    """Queue a request for the user to answer; None when there is nothing to ask."""
+    try:
+        app = validate_package(app)
+    except RoutineError:
+        return None
+    if app in configured_allowed_apps():
+        return None
+    request = {"app": app, "kind": "permission" if app in PERMISSION_DIALOGS else "app",
+               "source": source, "routine": routine, "at": time.time()}
+    _write_requests([request] + [i for i in app_requests() if i["app"] != app])
+    _broadcast("apps.requested", request)
+    return request
+
+
+def dismiss_app_request(app: str) -> None:
+    _write_requests([i for i in app_requests() if i["app"] != app])
+    _broadcast("apps.changed", {"app": app})
+
+
+def _save_allowed(apps: list[str]) -> None:
+    from hermes_cli.plugins_state import save_plugin_setting
+    save_plugin_setting(PLUGIN, ("allowed_apps",), apps)
+
+
+def allow_app(app: str) -> list[str]:
+    """Add an app to the allowlist. Callers must be acting on a person's own click or command."""
+    app = validate_package(app)
+    if app in PERMISSION_DIALOGS:
+        raise RoutineError("Android's permission dialog is answered on the phone, not allowlisted")
+    apps = configured_allowed_apps()
+    if app not in apps:
+        apps = apps + [app]
+        _save_allowed(apps)
+    dismiss_app_request(app)
+    return apps
+
+
+def revoke_app(app: str) -> list[str]:
+    app = validate_package(app)
+    apps = [a for a in configured_allowed_apps() if a != app]
+    _save_allowed(apps)
+    _broadcast("apps.changed", {"app": app})
+    return apps
+
+
+def guard_events(text: str) -> list[dict]:
+    """Guard events in a script's output (phone_exec prints them like routine runs do)."""
+    found = []
+    for line in str(text or "").splitlines():
+        if line.startswith(EVENT_PREFIX):
+            event = _parse_event(line[len(EVENT_PREFIX):])
+            if event and event.get("event") == "guard" and event.get("app"):
+                found.append(event)
+    return found
+
+
 def guard_source(allowed_apps) -> str:
     """The app guard for a script, or "" when no allowlist is set (the guard is opt-in)."""
     apps = sorted({str(a).strip() for a in (allowed_apps or ()) if str(a).strip()})
@@ -406,7 +509,8 @@ class _Run:
             self.record["failed_checkpoint"] = {k: event.get(k)
                                                 for k in ("name", "expected", "seen_text", "screenshot", "similarity")}
         if event.get("event") == "guard":
-            self.record["error"] = f"stopped: {event.get('app')} is not on the allowed apps list"
+            self.record["error"] = block_message(str(event.get("app")))
+            note_blocked_app(str(event.get("app")), source="routine", routine=self.name)
         if self.on_event is not None:
             try:
                 self.on_event(event)

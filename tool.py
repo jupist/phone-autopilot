@@ -142,6 +142,26 @@ def on_pre_tool_call(tool_name: str = "", args: dict | None = None, **kwargs: An
     return gate(args) if gate is not None else None
 
 
+def _exec_output(result: Any) -> str:
+    """phone_exec's stdout from its result: a JSON string, or a dict when a screenshot is attached."""
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except ValueError:
+            return result
+    if isinstance(result, dict):
+        return str(result.get("output") or "")
+    return ""
+
+
+def on_post_tool_call(tool_name: str = "", result: Any = None, **kwargs: Any) -> None:
+    """Queue an Allow request in the phone pane when the guard stopped a phone_exec script."""
+    if tool_name != "phone_exec":
+        return
+    for event in engine.guard_events(_exec_output(result)):
+        engine.note_blocked_app(str(event["app"]), source="phone_exec")
+
+
 def _save(args: dict) -> dict:
     code = str(args.get("code") or "")
     if not code.strip():

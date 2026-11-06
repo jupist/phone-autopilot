@@ -65,10 +65,11 @@ def register(ctx) -> None:
         check_fn=engine.phone_harness_available, emoji="🤖",
     )
     ctx.register_hook("pre_tool_call", tool.on_pre_tool_call)
+    ctx.register_hook("post_tool_call", tool.on_post_tool_call)
     ctx.register_command(
         "routines", handler=commands.handle_routines,
-        description="List, run, show or delete phone routines",
-        args_hint="[list | show <name> | run <name> | delete <name>]",
+        description="List, run, show or delete phone routines; allow apps they may use",
+        args_hint="[list | show <name> | run <name> | delete <name> | apps | allow <app> | revoke <app>]",
     )
     _register_blueprint(ctx)
     ctx.register_skill(PLUGIN, SKILL_MD, description=_skill_description(SKILL_MD))

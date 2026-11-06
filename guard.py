@@ -15,6 +15,8 @@ import time as _guard_time
 _GUARD_POLL_S = 0.6
 # System surfaces a script passes through without opening an app: the shade, recents, OS dialogs.
 _GUARD_SYSTEM = {"com.android.systemui", "android"}
+# Android's "Allow <app> to ...?" dialog: only the user answers it, so the guard stops and leaves it up.
+_GUARD_PERMISSION_DIALOGS = {"com.google.android.permissioncontroller", "com.android.permissioncontroller"}
 
 
 def _guard_home_packages():
@@ -34,11 +36,19 @@ def _guard_allowed():
 
 
 def _guard_violation(pkg):
-    print("@@POCKET " + _guard_json.dumps({"event": "guard", "status": "blocked", "app": pkg}), flush=True)
-    try:
-        send("nav.home")
-    except Exception:
-        pass
+    dialog = pkg in _GUARD_PERMISSION_DIALOGS
+    status = "needs_user" if dialog else "blocked"
+    print("@@POCKET " + _guard_json.dumps({"event": "guard", "status": status, "app": pkg}), flush=True)
+    if dialog:
+        print("pocket-autopilot: stopped. Android is asking for a permission; the user must answer it "
+              "on the phone. Never tap it from a script.", flush=True)
+    else:
+        print(f"pocket-autopilot: stopped. {pkg} is not an allowed app. Ask the user to allow it with "
+              f"Allow in the phone pane, or by typing /routines allow {pkg}", flush=True)
+        try:
+            send("nav.home")
+        except Exception:
+            pass
     _thread.interrupt_main()
 
 

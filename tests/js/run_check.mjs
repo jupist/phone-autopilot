@@ -91,6 +91,27 @@ assert(afterRun.includes('Expected') && afterRun.includes('Claim'), 'failed chec
 assert(afterRun.includes('/tmp/x.png'), 'failed checkpoint shows screenshot path')
 assert(afterRun.includes('daily-claim v3'), 'run header shows routine and version')
 
+for (const name of ['requested', 'changed']) {
+  assert(typeof listeners[`plugin.pocket-autopilot.apps.${name}`] === 'function', `listener for apps.${name}`)
+}
+globalThis.__queryData = {
+  'pocket-autopilot/apps': {
+    ok: true,
+    allowed: [],
+    requests: [
+      { app: 'com.android.settings', kind: 'app', source: 'routine', routine: 'deep-work', at: 2 },
+      { app: 'com.google.android.permissioncontroller', kind: 'permission', source: 'phone_exec', at: 1 },
+    ],
+  },
+}
+const withRequests = textOf(pane.render())
+assert(withRequests.includes('Routine deep-work tried to open an app'), 'app request card names the routine')
+assert(withRequests.includes('com.android.settings') && withRequests.includes('Allow'), 'app request card offers Allow')
+assert(withRequests.includes('Android is asking for a permission'), 'permission dialog card')
+assert(withRequests.includes('Answer the dialog on your phone'), 'permission dialog is answered on the phone')
+globalThis.__queryData = {}
+assert(!textOf(pane.render()).includes('tried to open an app'), 'no card without requests')
+
 const src = await import('node:fs').then((fs) => fs.readFileSync(join(here, '..', '..', 'desktop', 'plugin.js'), 'utf8'))
 assert(!/\beval\s*\(|new Function|import\s*\(/.test(src), 'no eval, new Function or dynamic import')
 

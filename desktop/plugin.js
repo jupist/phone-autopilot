@@ -41,6 +41,12 @@ const RUN_EVENTS = {
   finished: `plugin.${ID}.run.finished`,
 }
 
+const APP_EVENTS = {
+  requested: `plugin.${ID}.apps.requested`,
+  changed: `plugin.${ID}.apps.changed`,
+}
+const APPS_MS = 5000
+
 const OK = 'var(--ui-green)'
 const BAD = 'var(--ui-red)'
 const MUTED_COLOR = 'var(--ui-text-tertiary)'
@@ -186,6 +192,14 @@ function useFrame(ctx, enabled) {
     queryFn: () => call(ctx, '/frame?max_w=480&quality=60'),
     enabled,
     refetchInterval: visiblePoll(FRAME_MS),
+  })
+}
+
+function useApps(ctx) {
+  return useQuery({
+    queryKey: [ID, 'apps'],
+    queryFn: () => call(ctx, '/apps'),
+    refetchInterval: visiblePoll(APPS_MS),
   })
 }
 
@@ -433,6 +447,58 @@ function routinesSection(ctx, routines, { connected, runningNames }) {
   )
 }
 
+// ---- app permissions -------------------------------------------------------
+// Allow is a person's click: the agent has no tool that grants apps, and this route needs the
+// dashboard session token only the UI holds.
+
+async function answerApp(ctx, app, verb) {
+  const res = await call(ctx, `/apps/${verb}`, { method: 'POST', body: { app } })
+  if (res?.ok) queryClient.invalidateQueries({ queryKey: [ID, 'apps'] })
+  else fail(res, `Could not update ${app}`)
+}
+
+function whoTried(req) {
+  if (req.source === 'routine' && req.routine) return `Routine ${req.routine}`
+  return 'The agent'
+}
+
+function appRequestCard(ctx, req) {
+  const permission = req.kind === 'permission'
+  const title = permission ? 'Android is asking for a permission' : `${whoTried(req)} tried to open an app`
+  const body = permission
+    ? 'Answer the dialog on your phone. A routine never taps it for you.'
+    : 'It is not on your allowed apps, so the phone went Home and the script stopped.'
+  const buttons = permission
+    ? [h(Button, { key: 'ok', variant: 'chip', size: 'xs', onClick: () => answerApp(ctx, req.app, 'dismiss') }, 'Done')]
+    : [
+        h(Button, { key: 'allow', size: 'xs', 'aria-label': `Allow ${req.app}`, onClick: () => answerApp(ctx, req.app, 'allow') },
+          h(icons.Check, { className: 'size-3' }), 'Allow'),
+        h(Button, { key: 'no', variant: 'chip', size: 'xs', onClick: () => answerApp(ctx, req.app, 'dismiss') }, 'Not now'),
+      ]
+  return h(
+    'div',
+    {
+      key: req.app,
+      role: 'alert',
+      style: {
+        display: 'flex', flexDirection: 'column', gap: 6, padding: 10, borderRadius: 10,
+        border: '1px solid var(--ui-stroke-secondary)', background: 'var(--ui-bg-elevated)',
+      },
+    },
+    h('span', { style: { fontSize: 12, fontWeight: 600, color: 'var(--ui-text-primary)' } }, title),
+    h('span', { style: { ...MONO, ...ELLIPSIS, color: 'var(--ui-text-secondary)' } }, req.app),
+    h('span', { style: { ...MUTED, fontSize: 11 } }, body),
+    h('div', { style: { display: 'flex', gap: 6 } }, ...buttons),
+  )
+}
+
+function appRequestsSection(ctx, apps) {
+  const requests = Array.isArray(apps.data?.requests) ? apps.data.requests : []
+  if (requests.length === 0) return null
+  return h('section', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+    requests.map((req) => appRequestCard(ctx, req)))
+}
+
 function navButton(ctx, label, Icon, key, onFailed) {
   return h(
     Button,
@@ -458,6 +524,7 @@ function PhonePane({ ctx }) {
   const [unsupported, setUnsupported] = useState({})
   const status = useStatus(ctx)
   const routines = useRoutines(ctx)
+  const apps = useApps(ctx)
   const runs = useValue($runLog)
   const st = status.data || null
   const connected = st?.connected === true
@@ -630,6 +697,7 @@ function PhonePane({ ctx }) {
     'div',
     { style: { display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px 16px', minWidth: 0, height: '100%', overflowY: 'auto' } },
     header,
+    appRequestsSection(ctx, apps),
     screen,
     routinesSection(ctx, routines, { connected, runningNames }),
     logSection(ctx, runs),
@@ -748,6 +816,11 @@ export default {
     ctx.onEvent(RUN_EVENTS.started, (event) => onRunStarted(event.payload || {}))
     ctx.onEvent(RUN_EVENTS.event, (event) => onRunEvent(event.payload || {}))
     ctx.onEvent(RUN_EVENTS.finished, (event) => onRunFinished(event.payload || {}))
+    ctx.onEvent(APP_EVENTS.requested, () => {
+      queryClient.invalidateQueries({ queryKey: [ID, 'apps'] })
+      revealPane()
+    })
+    ctx.onEvent(APP_EVENTS.changed, () => queryClient.invalidateQueries({ queryKey: [ID, 'apps'] }))
     ctx.addEventListener(document, 'visibilitychange', () => {
       if (document.visibilityState === 'visible') queryClient.invalidateQueries({ queryKey: [ID] })
     })

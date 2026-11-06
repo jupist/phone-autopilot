@@ -61,21 +61,33 @@ the saved one. To confirm a move landed, `before = snap(board)` then
 
 ## App allowlist
 
-Set the apps routines and `phone_exec` may use:
+Choose which apps routines and `phone_exec` may use. With at least one app
+allowed, every script runs with a watchdog that checks the foreground app. If
+anything else comes to the front (apart from the launcher and system UI), it
+presses Home and stops the script.
 
-```yaml
-plugins:
-  entries:
-    pocket-autopilot:
-      settings:
-        allowed_apps:
-          - com.tpcstld.twozerogame
+You don't have to list apps up front. The first time a script reaches a new
+app, the phone pane shows a card: **Routine deep-work tried to open an app:
+com.spotify.music [Allow] [Not now]**. One click allows it from then on. In
+chat, type the same thing as a command:
+
+```
+/routines allow com.spotify.music
+/routines revoke com.spotify.music
+/routines apps
 ```
 
-With a list set, every routine run and every `phone_exec` script gets a
-watchdog that checks the foreground app. If anything else comes to the front
-(apart from the launcher and system UI), it presses Home and stops the script.
-An empty list (the default) turns the guard off.
+Only you can allow an app: the agent has no tool for it, and the pane's
+routes need the dashboard session token that only the UI holds, so even with
+approvals off (`/yolo`) the plugin gives it no way to widen the list. It is a
+guard rail, not a sandbox: an agent with shell access could still edit
+`config.yaml` directly. When Android shows an
+"Allow … ?" permission dialog, the script stops and leaves the dialog for you
+to answer on the phone.
+
+The list lives in `config.yaml` under
+`plugins.entries.pocket-autopilot.settings.allowed_apps` and also shows in
+Capabilities → Plugins. An empty list (the default) turns the guard off.
 
 ## How approval works
 

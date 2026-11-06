@@ -6,7 +6,8 @@ from typing import Callable
 
 from . import engine
 
-USAGE = "Usage: /routines [list | show <name> | run <name> | delete <name>]"
+USAGE = ("Usage: /routines [list | show <name> | run <name> | delete <name> | apps | allow <app> "
+         "| revoke <app>]")
 NOT_APPROVED = ("Routine '{name}' is not approved yet. Ask the agent to run it once; "
                 "that run asks you to approve the code.")
 NO_ROUTINES = ("No routines yet. Ask the agent to explore a task on the phone and save it as a routine.")
@@ -76,10 +77,30 @@ def _delete(name: str) -> str:
     return f"Deleted routine '{name}'."
 
 
+def _apps(_name: str) -> str:
+    allowed = engine.configured_allowed_apps()
+    lines = ["Allowed apps: " + (", ".join(allowed) if allowed else "none (the app guard is off)")]
+    for request in engine.app_requests():
+        lines.append(f"Waiting for you: {request['app']} ({engine.block_message(request['app'])})")
+    return "\n".join(lines)
+
+
+def _allow(app: str) -> str:
+    # A slash command is typed by a person; the agent cannot run one, so this grant is the user's.
+    engine.allow_app(app)
+    return f"Allowed {app}. Routines and phone_exec scripts may now use it."
+
+
+def _revoke(app: str) -> str:
+    engine.revoke_app(app)
+    return f"Removed {app} from the allowed apps."
+
+
 _HANDLERS: dict[str, Callable[[str], str]] = {
     "": _list, "list": _list, "show": _show, "run": _run, "delete": _delete,
+    "apps": _apps, "allow": _allow, "revoke": _revoke,
 }
-_NEEDS_NAME = frozenset({"show", "run", "delete"})
+_NEEDS_NAME = frozenset({"show", "run", "delete", "allow", "revoke"})
 
 
 def handle_routines(raw_args: str) -> str:

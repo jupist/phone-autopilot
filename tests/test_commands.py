@@ -192,7 +192,8 @@ def test_register_wires_tool_hook_command_blueprint_and_skill():
     assert tool_kwargs["schema"]["name"] == "routine"
     assert callable(tool_kwargs["check_fn"]) and callable(tool_kwargs["handler"])
 
-    assert ctx.hooks == [("pre_tool_call", importlib.import_module("pocket_autopilot.tool").on_pre_tool_call)]
+    tool_mod = importlib.import_module("pocket_autopilot.tool")
+    assert ctx.hooks == [("pre_tool_call", tool_mod.on_pre_tool_call), ("post_tool_call", tool_mod.on_post_tool_call)]
 
     [(command_name, command_kwargs)] = ctx.commands
     assert command_name == "routines"

@@ -21,7 +21,10 @@ export function atom(initial) {
 export function useValue(store) { return store.get() }
 
 export const queryClient = { invalidateQueries() {} }
-export function useQuery() { return { data: undefined, isLoading: false } }
+export function useQuery(opts) {
+  const key = (opts?.queryKey || []).join('/')
+  return { data: globalThis.__queryData?.[key], isLoading: false }
+}
 
 export function relativeTime(ms) { return `t${Math.round(ms)}` }
 

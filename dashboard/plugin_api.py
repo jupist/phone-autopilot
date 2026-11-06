@@ -416,3 +416,39 @@ def _run_png(name, run_id):
     if root not in path.parents or not path.is_file():
         raise _ApiError(404, "no screenshot for this run")
     return path
+
+
+# --- app permissions --------------------------------------------------------
+# These routes sit behind the dashboard session token, which only the web UI holds, so an
+# Allow here is a person's click. The agent has no tool that grants apps.
+
+def _app_field(body):
+    app = _body_dict(body).get("app")
+    if not isinstance(app, str):
+        raise _ApiError(400, "app must be a package name")
+    return app
+
+
+@_route("get", "/apps")
+@_safe
+def list_apps():
+    eng = _engine()
+    return {"ok": True, "allowed": eng.configured_allowed_apps(), "requests": eng.app_requests()}
+
+
+@_route("post", "/apps/allow")
+@_safe
+def allow_app(body: Optional[dict] = None):
+    eng = _engine()
+    try:
+        allowed = eng.allow_app(_app_field(body))
+    except eng.RoutineError as exc:
+        raise _ApiError(400, str(exc)) from exc
+    return {"ok": True, "allowed": allowed}
+
+
+@_route("post", "/apps/dismiss")
+@_safe
+def dismiss_app(body: Optional[dict] = None):
+    _engine().dismiss_app_request(_app_field(body))
+    return {"ok": True}
