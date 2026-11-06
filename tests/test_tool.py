@@ -102,7 +102,7 @@ def test_save_always_asks_with_sha_prefix_rule_key(calls, monkeypatch):
         task_id="t1", session_id="s1", tool_call_id="c1")
     assert directive["action"] == "approve"
     assert directive["rule_key"] == f"pocket-autopilot:save:daily-claim:{SHA[:12]}"
-    assert "save routine 'daily-claim' (v3)" in directive["message"]
+    assert "save routine 'daily-claim' (v3, 3 lines)" in directive["message"]
     assert "ensure_device()" in directive["message"]
 
 
@@ -112,7 +112,7 @@ def test_save_message_numbers_a_brand_new_routine_v1(calls, monkeypatch):
     monkeypatch.setattr(engine, "get_routine", missing)
     directive = tool.on_pre_tool_call(tool_name="routine",
                                       args={"action": "save", "name": "fresh", "code": CODE})
-    assert "(v1)" in directive["message"]
+    assert "(v1, 3 lines)" in directive["message"]
 
 
 def test_save_message_previews_only_first_40_lines(calls):
@@ -121,6 +121,23 @@ def test_save_message_previews_only_first_40_lines(calls):
                                       args={"action": "save", "name": "x", "code": long_code})
     assert "line39" in directive["message"]
     assert "line40" not in directive["message"]
+    assert "60 more lines" in directive["message"]
+
+
+def test_approval_names_everything_past_the_preview(calls):
+    # The risky part sits below the preview: the summary must still surface it.
+    long_code = "\n".join([f"step('s{i}')" for i in range(45)] + [
+        "open_app('com.example.app')", "shell('pm clear com.example.app')",
+        "type_text(PARAMS['query'])", "tap_image('play')", "tap(10, 20)", "import os"])
+    message = tool.on_pre_tool_call(tool_name="routine",
+                                    args={"action": "save", "name": "x", "code": long_code})["message"]
+    assert "Opens apps: 'com.example.app'" in message
+    assert "Runs adb shell: 'pm clear com.example.app'" in message
+    assert "Types: PARAMS['query']" in message
+    assert "Taps by image: 'play'" in message
+    assert "1 taps at coordinates" in message
+    assert "Imports (runs on this computer): os" in message
+    assert "and 39 more" in message  # 45 steps, 6 shown
 
 
 def test_run_unapproved_routine_asks(calls):
@@ -128,7 +145,7 @@ def test_run_unapproved_routine_asks(calls):
                                       args={"action": "run", "name": "daily-claim"})
     assert directive["action"] == "approve"
     assert directive["rule_key"] == f"pocket-autopilot:run:daily-claim:{SHA[:12]}"
-    assert "run routine 'daily-claim' (v2)" in directive["message"]
+    assert "run routine 'daily-claim' (v2, 3 lines)" in directive["message"]
 
 
 def test_run_approved_routine_is_silent(calls, monkeypatch):

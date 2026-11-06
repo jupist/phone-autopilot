@@ -509,6 +509,19 @@ def _kill_group(proc: subprocess.Popen) -> None:
         pass
 
 
+SUMMARY_VALUE_CHARS = 300
+
+
+def _trim(value):
+    """Keep a done() summary readable: a routine that reports a whole system dump gets its head."""
+    if isinstance(value, str) and len(value) > SUMMARY_VALUE_CHARS:
+        return value[:SUMMARY_VALUE_CHARS] + f"… ({len(value)} chars)"
+    if isinstance(value, (list, dict)) and len(json.dumps(value, ensure_ascii=False)) > SUMMARY_VALUE_CHARS:
+        text = json.dumps(value, ensure_ascii=False)
+        return text[:SUMMARY_VALUE_CHARS] + f"… ({len(text)} chars)"
+    return value
+
+
 def _parse_event(text: str) -> dict | None:
     try:
         event = json.loads(text)
@@ -537,6 +550,8 @@ class _Run:
         self.stdout.append(line)
 
     def _add_event(self, event: dict) -> None:
+        if event.get("event") == "done":
+            event = {k: _trim(v) for k, v in event.items()}
         event = {"t": round(time.time() - self.started, 3), **event}
         self.record["events"].append(event)
         if event.get("event") == "checkpoint" and event.get("status") == "failed":

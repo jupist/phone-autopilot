@@ -64,7 +64,9 @@ For each action, use the highest rung that works on that screen:
    volume or media playback has adb commands (`shell("cmd notification set_dnd priority")`), and many apps
    open straight to a screen through an intent or deep link. These work the same on every phone and every
    layout. Read the result back the same way (`shell("settings get global zen_mode")`). Change only what
-   the user asked for.
+   the user asked for. Before navigating an app to find out its state, look for the state in the system:
+   `media_state()` says what any media app is playing and from which playlist or album, and `dumpsys`
+   often holds the rest.
 2. **The accessibility tree**: `tap_ui(label)` matches text, content description or resource id, and it
    sees icon buttons.
 3. **Visible text**: `tap_text(label)`.
@@ -98,10 +100,16 @@ several steps per `phone_exec` call rather than one.
    running the routine twice gives the same result. Branch on every state you saw while exploring
    (`Claim` / `Collected`, running / stopped).
 5. **Wait for conditions, not time, and bound every loop.** Use `checkpoint`, `wait_for_text` or
-   `wait_stable` instead of fixed `wait(2)` calls, and give every scroll or retry loop a maximum.
-6. **Leave the phone tidy.** Close what you opened along the way (the notification shade, dialogs,
+   `wait_stable` instead of fixed `wait(2)` calls, and give every scroll or retry loop a maximum. For a
+   condition the screen cannot show, use `checkpoint(name, check=callable)`. Never use a bare `assert`
+   or the prelude's private helpers (`_emit`, `_miss`): only checkpoints leave a record a repair can use.
+6. **Keep it short.** The user approves the routine before it runs, and the prompt has room for a
+   summary and about 40 lines. A routine for a few goals should read in one screen; when it grows past
+   that, look for a cheaper signal that makes the branches unnecessary. Keep `done()` to a short summary,
+   not raw dumps.
+7. **Leave the phone tidy.** Close what you opened along the way (the notification shade, dialogs,
    keyboards) and end on the screen the routine is for.
-7. **A repair adds; it does not replace.** When a checkpoint fails on a state you had not seen, add a
+8. **A repair adds; it does not replace.** When a checkpoint fails on a state you had not seen, add a
    branch for it and keep the path that already worked.
 
 ```python

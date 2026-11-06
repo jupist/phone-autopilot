@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from . import engine
+from . import engine, review
 
 PLUGIN = "pocket-autopilot"
 DEFAULT_TIMEOUT_S = 300
@@ -24,7 +24,8 @@ DESCRIPTION = (
     "read per-run values from PARAMS (never hardcode them), and end with done(). Make it survive "
     "change: skip a phase whose goal already holds; act through the sturdiest handle (system command, "
     "then tap_ui/tap_text by label, then tap_image(ref) on screens with no text, coordinates last); "
-    "try the visible target, then search; reach states instead of flipping toggles. Games and other "
+    "try the visible target, then search; reach states instead of flipping toggles; read state the "
+    "screen cannot show with checkpoint(name, check=...) and media_state(); keep it short. Games and other "
     "canvas apps show no text: take a screenshot() with phone_exec, pass crops of stable UI as "
     "refs on save, and check them with checkpoint(name, image='<ref>') or press them with "
     "tap_image('<ref>'); before=snap(region) then "
@@ -90,8 +91,12 @@ def _next_version(name: str) -> int:
 
 
 def _review_message(verb: str, name: str, title: str, version: int, code: str) -> str:
-    preview = "\n".join(code.splitlines()[:PREVIEW_LINES])
-    return f"{title} — {verb} routine '{name}' (v{version}):\n{preview}"
+    lines = code.splitlines()
+    preview = "\n".join(lines[:PREVIEW_LINES])
+    rest = f"\n… {len(lines) - PREVIEW_LINES} more lines" if len(lines) > PREVIEW_LINES else ""
+    return (f"{title} — {verb} routine '{name}' (v{version}, {len(lines)} lines).\n"
+            f"What it does on the phone:\n{review.summarize(code)}\n"
+            f"Code:\n{preview}{rest}")
 
 
 def _approve_directive(verb: str, name: str, sha: str, message: str) -> dict:

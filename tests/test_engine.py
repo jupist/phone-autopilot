@@ -176,3 +176,13 @@ def test_list_and_delete(engine):
     assert [m["name"] for m in engine.list_routines()] == ["b-routine"]
     with pytest.raises(engine.RoutineError):
         engine.get_routine("a-routine")
+
+
+def test_done_summary_keeps_values_short(engine, phone):
+    code = "done(media='x' * 5000, ok=True, playlist='Jazz for Study')\n"
+    meta = engine.save_routine("dumpy", code)
+    engine.approve("dumpy", meta["sha256"])
+    record = engine.run_routine("dumpy", timeout_s=30)
+    [done] = [e for e in record["events"] if e["event"] == "done"]
+    assert done["ok"] is True and done["playlist"] == "Jazz for Study"
+    assert len(done["media"]) < 400 and done["media"].endswith("(5000 chars)")

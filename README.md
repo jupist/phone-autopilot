@@ -102,9 +102,11 @@ Capabilities → Plugins. An empty list (the default) turns the guard off.
 ## How approval works
 
 - **Saving** a routine, and **running** one that has not been approved yet,
-  goes through the normal Hermes approval prompt. The prompt shows the title,
-  the routine name, and the first lines of the code. Nothing new runs on your
-  phone without your yes.
+  goes through the normal Hermes approval prompt. The prompt summarises the
+  whole routine, read from its code without running it: the apps it opens,
+  every adb shell command, what it types and taps, and anything it imports
+  (routines run on this computer). The first 40 lines of code follow. Nothing
+  new runs on your phone without your yes.
 - Once approved, a routine runs without prompts. Editing it (a new version)
   requires approval again.
 - **Scheduled runs never self-repair.** If a checkpoint misses unattended, the
