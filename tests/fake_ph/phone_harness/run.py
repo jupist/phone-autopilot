@@ -2,7 +2,7 @@
 
 The screen script is a JSON file named by FAKE_PH_SCREEN:
   {"shot_dir": "...", "frames": [{"app": "...", "texts": [...]}, ...]}
-Each screen() call reads the next frame; the last frame repeats.
+Each screen() or screen.capture call reads the next frame; the last frame repeats.
 """
 import json
 import os
@@ -60,7 +60,9 @@ def shell(cmd, binary=False, timeout=60):
 
 def send(op, **kw):
     if op == "screen.capture":
-        return _current()["image"], None
+        image = _current()["image"]
+        _STATE["calls"] += 1
+        return image, None
     print(f"SEND {op}", flush=True)
 
 

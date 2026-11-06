@@ -80,7 +80,10 @@ Many games draw on a canvas, so `screen()` and `find_text()` return nothing. Ver
 2. On `save`, pass `refs`: `{"logo": {"screenshot": "<that path>", "region": [30, 490, 430, 160]}}`.
 3. In the script, `checkpoint("game-open", image="logo")` passes when the live region matches the ref
    (`threshold=0.92` by default). A failed image checkpoint reports `similarity`.
-4. To confirm an action landed, `before = snap(region)`, act, then `changed(before, region)`.
+4. To confirm an action landed, `before = snap(region)`, act, then
+   `checkpoint("moved", changed_from=(before, region))`. It polls until the region differs, and a move that
+   never lands fails like any checkpoint, with a screenshot. Use the bare `changed(before, region)` only to
+   branch, never `raise` on it: a plain exception leaves no failure record to heal from.
 
 ```python
 # 2048-moves: make a few moves in 2048 and confirm the board changed.
@@ -91,9 +94,7 @@ board = PARAMS["board"]            # [x, y, w, h] of the grid
 for direction in PARAMS["moves"]:  # e.g. ["up", "left", "down", "right"]
     before = snap(board)
     swipe(direction, at=(540, 1325))
-    wait(0.6)
-    if not changed(before, board):
-        print("no-op move:", direction)
+    checkpoint("moved " + direction, changed_from=(before, board), timeout=3)
 checkpoint("still-in-game", image="logo", timeout=5)
 done(moves=len(PARAMS["moves"]))
 ```

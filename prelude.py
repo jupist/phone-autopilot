@@ -93,7 +93,9 @@ def _image_ok(image, threshold):
     return _probe(lambda: looks_like(image, threshold)[0])
 
 
-def _matches(text, any_of, app, exact, image=None, threshold=MATCH):
+def _matches(text, any_of, app, exact, image=None, threshold=MATCH, changed_from=None):
+    if changed_from is not None and not _probe(lambda: changed(*changed_from)):
+        return False
     if image is not None and not _image_ok(image, threshold):
         return False
     if text is not None and not _seen(text, exact):
@@ -103,9 +105,11 @@ def _matches(text, any_of, app, exact, image=None, threshold=MATCH):
     return app is None or _in_app(app)
 
 
-def _expected(text, any_of, app, image=None):
+def _expected(text, any_of, app, image=None, changed_from=None):
     """What the checkpoint wanted, in words, for the failure record."""
-    parts = [f"screen matching ref {image!r}"] if image is not None else []
+    parts = [f"region {list(changed_from[1])} changed"] if changed_from is not None else []
+    if image is not None:
+        parts.append(f"screen matching ref {image!r}")
     if text is not None:
         parts.append(text)
     if any_of is not None:
@@ -129,19 +133,22 @@ def step(name):
 
 
 def checkpoint(name, text=None, any_of=None, app=None, timeout=10.0, exact=False, image=None,
-               threshold=MATCH):
+               threshold=MATCH, changed_from=None):
     """Assert the expected screen, polling until it shows or the timeout passes.
+
+    changed_from=(before, region) passes once that region differs from an earlier snap(), so
+    "the move landed" fails like any other checkpoint, with a screenshot the agent can heal from.
 
     On a miss it emits what was on screen plus a screenshot, then raises, so the
     engine records the failure and the agent can heal the routine.
     """
     _emit("checkpoint", name=name, status="started")
     deadline = time.time() + timeout
-    while not _matches(text, any_of, app, exact, image, threshold):
+    while not _matches(text, any_of, app, exact, image, threshold, changed_from):
         if time.time() >= deadline:
             shot, seen = _evidence()
             extra = {"similarity": _probe(lambda: looks_like(image, threshold)[1])} if image else {}
-            _emit("checkpoint", name=name, status="failed", expected=_expected(text, any_of, app, image),
+            _emit("checkpoint", name=name, status="failed", expected=_expected(text, any_of, app, image, changed_from),
                   seen_text=seen, screenshot=shot, **extra)
             raise CheckpointMiss(name)
         time.sleep(POLL_S)
