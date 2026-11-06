@@ -50,6 +50,45 @@ Names are lowercase letters, digits, and hyphens, up to 48 characters.
 - Check for a specific text, not a visual guess. Prefer `text=` or `any_of=`, and `app=` when the app matters.
 - Do not type passwords, PINs, or 2FA codes. Do not send, post, buy, or delete without the user's explicit yes.
 
+## Make routines survive change
+
+A routine replays for weeks while lists reorder, apps reopen on other tabs, and toggles are already
+on. Write it so that ordinary variation never needs a repair.
+
+1. **Find elements by meaning, not position.** In order of preference: `tap_ui(label)` (the
+   accessibility tree: text, content description or resource id, and it sees icon buttons),
+   `tap_text(label)` (visible text), an image ref, and raw coordinates last. Use coordinates only on a
+   canvas, and only after an image checkpoint has confirmed the screen.
+2. **Fastest path first, sturdy fallback after.** If the target is visible, tap it. Otherwise scroll a
+   little (`scroll_until`), and then fall back to the app's own search. Library order, feed position
+   and "recently used" never matter then.
+3. **Start from a known place.** Apps resume wherever the user left them. At the start of each app,
+   tap a fixed anchor (a bottom tab, Home) by its label and checkpoint it, instead of assuming the
+   launch screen.
+4. **Reach a state; never flip one.** A toggle or timer can already be on. Read the current state
+   and act only if it is not the goal, so running the routine twice gives the same result. Branch on
+   every state you saw while exploring (`Claim` / `Collected`, running / stopped).
+5. **Wait for conditions, not time.** Use `checkpoint`, `wait_for_text` or `wait_stable`, and avoid
+   fixed `wait(2)` calls.
+6. **A repair adds; it does not replace.** When a checkpoint fails on a state you had not seen, add a
+   branch for it and keep the path that already worked.
+
+```python
+# The playlist step from a routine: anchor, then visible → search.
+# Labels are the ones read from screen() while exploring.
+open_app("com.spotify.music")
+tap_ui("Your Library")
+checkpoint("library", text="Your Library", app="com.spotify.music")
+playlist = PARAMS["playlist"]
+if not find_text(playlist, exact=True):
+    tap_ui("Search")
+    tap_text("What do you want to listen to?")
+    type_text(playlist)
+    wait_for_text(playlist, exact=True)
+tap_text(playlist, exact=True)
+checkpoint("playlist-open", text=playlist)
+```
+
 ## Example routine
 
 ```python
