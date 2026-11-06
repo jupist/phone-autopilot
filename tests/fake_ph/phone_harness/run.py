@@ -58,6 +58,10 @@ def shell(cmd, binary=False, timeout=60):
     return ""
 
 
+def tap(x, y):
+    print(f"TAP {x} {y}", flush=True)
+
+
 def send(op, **kw):
     if op == "screen.capture":
         image = _current()["image"]
@@ -76,4 +80,5 @@ exec(_code, {
     "wait_stable": wait_stable,
     "shell": shell,
     "send": send,
+    "tap": tap,
 })

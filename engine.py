@@ -7,6 +7,7 @@ phone-harness's own Hermes plugin does, and streams the `@@POCKET` events it pri
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import importlib.util
 import json
@@ -136,6 +137,34 @@ def _region(value) -> tuple[int, int, int, int]:
     return x, y, w, h
 
 
+_BLANK_STDDEV = 6.0
+
+
+@functools.lru_cache(maxsize=1)
+def _image_search():
+    """prelude.py's image search, so a ref is vetted by the same code that will look for it."""
+    spec = importlib.util.spec_from_file_location("pocket_autopilot_prelude", _PRELUDE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _ref_problem(img, crop, x: int, y: int) -> str | None:
+    """Why a crop makes a poor ref: blank, or found in more than one place on its own screen."""
+    from PIL import ImageOps, ImageStat
+
+    if max(ImageStat.Stat(crop.convert("L")).stddev) < _BLANK_STDDEV:
+        return "is nearly blank, so it would match any plain area"
+    masked = img.copy()
+    masked.paste(ImageOps.invert(crop), (x, y))  # hide the original so only a second copy can match
+    search = _image_search()
+    hit = search._locate(masked, crop)
+    if hit is not None and hit[0] >= search.MATCH:
+        _, ox, oy = hit
+        return f"also appears at [{ox}, {oy}] on the same screen, so a search could tap the wrong one"
+    return None
+
+
 def _save_refs(name: str, refs: dict) -> dict:
     """Crop each reference from the screenshot the agent took while exploring.
 
@@ -157,7 +186,12 @@ def _save_refs(name: str, refs: dict) -> dict:
         with Image.open(shot) as img:
             if x + w > img.width or y + h > img.height:
                 raise RoutineError(f"ref {ref!r}: region falls outside the {img.width}x{img.height} screenshot")
-            crop = img.convert("RGB").crop((x, y, x + w, y + h))
+            screen = img.convert("RGB")
+            crop = screen.crop((x, y, x + w, y + h))
+        problem = _ref_problem(screen, crop, x, y)
+        if problem:
+            raise RoutineError(f"ref {ref!r} {problem}. Pick a region with distinctive content, such as a "
+                               "label, logo or icon together with what surrounds it")
         out = _routine_dir(name) / "refs" / f"{ref}.png"
         out.parent.mkdir(parents=True, exist_ok=True)
         crop.save(out)

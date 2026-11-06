@@ -14,11 +14,11 @@ def _png(path, size=(200, 400), color="white", box=None, box_color="red"):
 
 def test_save_crops_refs_into_the_routine(engine, data_dir, tmp_path):
     shot = _png(tmp_path / "shot.png", box=(10, 20, 50, 30))
-    meta = engine.save_routine("game", "done()", refs={"logo": {"screenshot": shot, "region": [10, 20, 50, 30]}})
-    assert meta["refs"] == {"logo": {"region": [10, 20, 50, 30]}}
+    meta = engine.save_routine("game", "done()", refs={"logo": {"screenshot": shot, "region": [5, 15, 60, 40]}})
+    assert meta["refs"] == {"logo": {"region": [5, 15, 60, 40]}}
     with Image.open(data_dir / "routines" / "game" / "refs" / "logo.png") as crop:
-        assert crop.size == (50, 30)
-        assert crop.getpixel((5, 5)) == (255, 0, 0)
+        assert crop.size == (60, 40)
+        assert crop.getpixel((10, 10)) == (255, 0, 0)
 
 
 @pytest.mark.parametrize("spec, message", [
@@ -37,7 +37,8 @@ def test_bad_refs_are_rejected_before_anything_is_saved(engine, data_dir, tmp_pa
 
 def _routine_with_logo(engine, tmp_path, code):
     shot = _png(tmp_path / "ref.png", box=(10, 20, 50, 30))
-    meta = engine.save_routine("game", code, refs={"logo": {"screenshot": shot, "region": [10, 20, 50, 30]}})
+    # The button with a margin of background: a solid crop would be refused as blank.
+    meta = engine.save_routine("game", code, refs={"logo": {"screenshot": shot, "region": [5, 15, 60, 40]}})
     engine.approve("game", meta["sha256"])
 
 
@@ -86,3 +87,42 @@ def test_a_move_that_never_lands_is_a_failed_checkpoint(engine, phone, tmp_path)
     assert record["ok"] is False
     assert record["failed_checkpoint"]["name"] == "moved"
     assert record["failed_checkpoint"]["expected"] == "region [10, 20, 50, 30] changed"
+
+
+def test_tap_image_finds_a_ref_wherever_the_layout_moved_it(engine, phone, tmp_path):
+    # Saved at (10, 20); on today's screen the same red button sits at (120, 300).
+    moved = _png(tmp_path / "moved.png", box=(120, 300, 50, 30))
+    phone.set_frames([{"app": "com.example.app", "texts": [], "image": moved}])
+    _routine_with_logo(engine, tmp_path, 'tap_image("logo", timeout=2)\ndone()\n')
+    record = engine.run_routine("game", timeout_s=30)
+    assert record["ok"] is True, record["error"]
+    assert "TAP 145 315" in record["output_tail"]  # the centre of the moved button
+
+
+def test_tap_image_miss_fails_like_a_checkpoint(engine, phone, tmp_path):
+    blank = _png(tmp_path / "blank.png", color="black")
+    phone.set_frames([{"app": "com.example.app", "texts": [], "image": blank}])
+    _routine_with_logo(engine, tmp_path, 'tap_image("logo", timeout=1)\ndone()\n')
+    record = engine.run_routine("game", timeout_s=30)
+    assert record["ok"] is False
+    assert record["failed_checkpoint"]["name"] == "tap logo"
+    assert record["failed_checkpoint"]["expected"] == "'logo' anywhere on screen"
+    assert "TAP" not in record["output_tail"]
+
+
+def test_a_blank_ref_is_refused(engine, tmp_path):
+    shot = _png(tmp_path / "shot.png", box=(10, 20, 50, 30))
+    with pytest.raises(engine.RoutineError, match="nearly blank"):
+        engine.save_routine("game", "done()", refs={"logo": {"screenshot": shot, "region": [10, 20, 50, 30]}})
+
+
+def test_a_ref_that_appears_twice_is_refused(engine, tmp_path):
+    # Two identical buttons: a search for one could land on the other.
+    from PIL import Image
+    img = Image.new("RGB", (200, 400), "white")
+    for y in (20, 200):
+        img.paste(Image.new("RGB", (50, 30), "red"), (10, y))
+    img.save(tmp_path / "twins.png")
+    with pytest.raises(engine.RoutineError, match=r"also appears at \[5, 195\]"):
+        engine.save_routine("game", "done()", refs={"logo": {"screenshot": str(tmp_path / "twins.png"),
+                                                             "region": [5, 15, 60, 40]}})

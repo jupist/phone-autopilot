@@ -52,41 +52,49 @@ Names are lowercase letters, digits, and hyphens, up to 48 characters.
 
 ## Make routines survive change
 
-A routine replays for weeks while lists reorder, apps reopen on other tabs, and toggles are already
-on. Write it so that ordinary variation never needs a repair.
+A routine replays for weeks on a phone you have only seen once: lists reorder, apps reopen on other tabs,
+toggles are already on, layouts and orientation change. Write it so that ordinary variation never needs a
+repair, and never ask the user to rearrange their phone to suit the routine.
 
-1. **Check the goal before the path.** Begin every phase by asking whether its goal already holds:
-   the timer is already on the Pomodoro screen, the music is already playing, Do Not Disturb is
-   already on. If it holds, skip the navigation. Apps resume where they were left, and that is often
-   exactly where the routine wants to be.
-2. **Otherwise start from a known place.** When the goal does not hold, tap a fixed anchor (a bottom
-   tab, Home) by its label and checkpoint it, instead of assuming the launch screen.
-3. **Find elements by meaning, not position.** In order of preference: `tap_ui(label)` (the
-   accessibility tree: text, content description or resource id, and it sees icon buttons),
-   `tap_text(label)` (visible text), an image ref, and raw coordinates last. Use coordinates only on a
-   canvas, and only after an image checkpoint has confirmed the screen. Never hardcode a coordinate per
-   orientation or screen size: derive it from a found element or from the screen bounds.
-4. **Fastest path first, sturdy fallback after.** If the target is visible, tap it. Otherwise scroll a
-   little (`scroll_until`), and then fall back to the app's own search. Library order, feed position
-   and "recently used" never matter then.
-5. **Reach a state; never flip one.** A toggle or timer can already be on. Read the current state
-   and act only if it is not the goal, so running the routine twice gives the same result. When the
-   screen cannot show the state, a read-only system query can (`shell("settings get global zen_mode")`).
-   Branch on every state you saw while exploring (`Claim` / `Collected`, running / stopped).
-6. **Ask the screen questions it can answer.** Animated screens (clocks, video, games, Quick Settings)
-   never settle, so `screen()` returns no text there and text checkpoints always time out. Use image refs
-   or `changed_from` on those screens. A screen without text is not a dead end: confirm it by image, then
-   act.
-7. **Use the system's own switch for phone-wide state.** Do Not Disturb, media playback and similar
-   phone-wide settings have adb commands, which work the same on every phone and every layout:
-   `shell("cmd notification set_dnd priority")` (and `off`), read back with
-   `shell("settings get global zen_mode")` (`0` is off). Drive the screen for what lives inside apps.
-   Only change state the user asked for.
-8. **Wait for conditions, not time, and bound every loop.** Use `checkpoint`, `wait_for_text` or
+### How to act: one ladder for every step
+
+For each action, use the highest rung that works on that screen:
+
+1. **The system's own interface**, when the thing has one. Phone-wide state such as Do Not Disturb,
+   volume or media playback has adb commands (`shell("cmd notification set_dnd priority")`), and many apps
+   open straight to a screen through an intent or deep link. These work the same on every phone and every
+   layout. Read the result back the same way (`shell("settings get global zen_mode")`). Change only what
+   the user asked for.
+2. **The accessibility tree**: `tap_ui(label)` matches text, content description or resource id, and it
+   sees icon buttons.
+3. **Visible text**: `tap_text(label)`.
+4. **The element's image**: `tap_image(ref)` searches the whole screen for a saved crop, so it still
+   finds a tile, icon or button after the layout or orientation moved it. It is how to press things on
+   screens that expose no text (Quick Settings, clocks, games, video).
+5. **Coordinates, last**, and only inside a region an image checkpoint has just confirmed. Derive them
+   from a found element or the screen bounds; never hardcode one per orientation or screen size.
+
+When a rung is unavailable, step down instead of stopping. `screen()` raising `TreeUnavailable` or
+returning nothing means the screen never settles: use rung 4 and image checkpoints there.
+
+### How to structure a routine
+
+1. **Check the goal before the path.** Begin every phase by asking whether its goal already holds (the
+   right screen is already open, the music is already playing, the setting is already on). If it holds,
+   skip the navigation: apps resume where they were left, often exactly where the routine wants to be.
+2. **Otherwise start from a known place.** Tap a fixed anchor (a bottom tab, Home) and checkpoint it,
+   instead of assuming the launch screen.
+3. **Fastest path first, sturdy fallback after.** If the target is visible, tap it. Otherwise scroll a
+   little (`scroll_until`), then use the app's own search. Library order, feed position and "recently
+   used" never matter then.
+4. **Reach a state; never flip one.** Read the current state and act only if it is not the goal, so
+   running the routine twice gives the same result. Branch on every state you saw while exploring
+   (`Claim` / `Collected`, running / stopped).
+5. **Wait for conditions, not time, and bound every loop.** Use `checkpoint`, `wait_for_text` or
    `wait_stable` instead of fixed `wait(2)` calls, and give every scroll or retry loop a maximum.
-9. **Leave the phone tidy.** Close what you opened along the way (the notification shade, dialogs,
+6. **Leave the phone tidy.** Close what you opened along the way (the notification shade, dialogs,
    keyboards) and end on the screen the routine is for.
-10. **A repair adds; it does not replace.** When a checkpoint fails on a state you had not seen, add a
+7. **A repair adds; it does not replace.** When a checkpoint fails on a state you had not seen, add a
    branch for it and keep the path that already worked.
 
 ```python
@@ -125,16 +133,21 @@ done(claimed=True, account=PARAMS.get("account", "default"))
 
 Its defaults go in `params`, for example `{"account": "default"}`.
 
-## Games and other canvas apps
+## Screens without text: games, clocks, Quick Settings
 
-Many games draw on a canvas, so `screen()` and `find_text()` return nothing. Verify them by image:
+Canvas apps, animated screens and some system panels expose no text, so `screen()` and `find_text()`
+return nothing. Work with them by image:
 
 1. While exploring, call `screenshot()` in `phone_exec`. It prints a PNG path. Look at the image and pick a
    region of **stable** UI, such as the title or a button, as `[x, y, w, h]` in screenshot pixels. Scores,
    timers and tiles change, so they make bad refs.
 2. On `save`, pass `refs`: `{"logo": {"screenshot": "<that path>", "region": [30, 490, 430, 160]}}`.
-3. In the script, `checkpoint("game-open", image="logo")` passes when the live region matches the ref
-   (`threshold=0.92` by default). A failed image checkpoint reports `similarity`.
+   Pick something distinctive: saving refuses a crop that is nearly blank or that appears twice on the
+   same screen, because a search for it could land on the wrong one. Include an icon's label or border.
+3. In the script, `checkpoint("game-open", image="logo")` passes when the region the ref was cut from
+   matches it (`threshold=0.92` by default); a failed image checkpoint reports `similarity`.
+   `tap_image("play")` finds the ref anywhere on screen and taps its centre, and `find_image("play")`
+   returns that point, or None, for branching. A `tap_image` miss fails like a checkpoint.
 4. To confirm an action landed, `before = snap(region)`, act, then
    `checkpoint("moved", changed_from=(before, region))`. It polls until the region differs, and a move that
    never lands fails like any checkpoint, with a screenshot. Use the bare `changed(before, region)` only to

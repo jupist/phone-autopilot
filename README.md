@@ -49,15 +49,25 @@ To run a routine every morning, add the blueprint:
 Other commands: `/routines` lists routines and their last run, and
 `/routines show <name>` prints the code and recent runs.
 
-## Games and other canvas apps
+## Screens without text
 
-Games draw on a canvas, so there is often no text for a checkpoint to read.
-Save an **image ref** instead: when saving, the agent passes
-`refs={"logo": [x, y, w, h]}` and the plugin crops that region from the
-current screen into `refs/logo.png`. A routine then checks
-`checkpoint("game open", image="logo")`, which compares the live crop against
-the saved one. To confirm a move landed, `before = snap(board)` then
-`changed(before, board)`.
+Games, clocks, video and some system panels (Quick Settings) expose no text,
+so a routine works with them by image. When saving, the agent passes
+`refs={"logo": {"screenshot": ..., "region": [x, y, w, h]}}` and the plugin
+crops that region into `refs/logo.png`. A crop that is nearly blank, or that
+appears twice on the same screen, is refused, because a search for it could
+land on the wrong spot.
+
+- `checkpoint("game open", image="logo")` compares the region the ref came
+  from with the saved crop.
+- `tap_image("play")` searches the whole screen for the ref and taps its
+  centre, so it still works after the layout or orientation moves the button.
+  `find_image("play")` returns that point, or `None`.
+- `before = snap(board)` then `checkpoint("moved", changed_from=(before, board))`
+  confirms that a move landed.
+
+Image search runs on Pillow alone and takes under a second on a phone-sized
+screen.
 
 ## App allowlist
 

@@ -41,12 +41,17 @@ def _in_app(app):
     return _probe(lambda: app in str(current_app()))
 
 
-def _live_image():
+def _capture():
+    """The live screen and the device rectangle it shows (None when the transport gives none)."""
     from PIL import Image
 
-    path, _bounds = send("screen.capture")
+    path, bounds = send("screen.capture")
     with Image.open(path) as img:
-        return img.convert("RGB")
+        return img.convert("RGB"), bounds
+
+
+def _live_image():
+    return _capture()[0]
 
 
 def _similarity(a, b):
@@ -87,6 +92,100 @@ def snap(region):
 def changed(before, region, min_diff=0.02):
     """True when a region no longer matches an earlier snap(): a move landed, a counter ticked."""
     return 1.0 - _similarity(_crop(_live_image(), region), before) >= min_diff
+
+
+# Image search: where a saved ref is on screen now, wherever the layout put it. Pillow only (the
+# routine environment has no numpy): a coarse pass on a downscaled screen keeps a few candidates,
+# then each is refined at full size and scored with _similarity.
+_SEARCH_MAX_SIDE = 220
+_SEARCH_KEEP = 4
+
+
+def _coarse_hits(screen, ref, f):
+    from PIL import Image, ImageChops, ImageStat
+
+    small = screen.resize((max(1, screen.width // f), max(1, screen.height // f)), Image.BOX)
+    tpl = ref.resize((max(1, ref.width // f), max(1, ref.height // f)), Image.BOX)
+    hits = []
+    for y in range(small.height - tpl.height + 1):
+        for x in range(small.width - tpl.width + 1):
+            box = (x, y, x + tpl.width, y + tpl.height)
+            hits.append((ImageStat.Stat(ImageChops.difference(small.crop(box), tpl)).sum[0], x * f, y * f))
+    return sorted(hits)[:_SEARCH_KEEP]
+
+
+def _refine(screen, ref, x0, y0, f):
+    from PIL import ImageChops, ImageStat
+
+    best = None
+    for y in range(max(0, y0 - f), min(screen.height - ref.height, y0 + f) + 1):
+        for x in range(max(0, x0 - f), min(screen.width - ref.width, x0 + f) + 1):
+            box = (x, y, x + ref.width, y + ref.height)
+            score = ImageStat.Stat(ImageChops.difference(screen.crop(box), ref)).sum[0]
+            if best is None or score < best[0]:
+                best = (score, x, y)
+    return best
+
+
+def _locate(screen, ref):
+    """Top-left of the best match of ref in screen and its similarity, or None if it cannot fit."""
+    if ref.width > screen.width or ref.height > screen.height:
+        return None
+    gray, tpl = screen.convert("L"), ref.convert("L")
+    f = max(1, min(ref.width, ref.height) // 12, -(-max(screen.size) // _SEARCH_MAX_SIDE))
+    found = []
+    for _, x, y in _coarse_hits(gray, tpl, f):
+        refined = _refine(gray, tpl, x, y, f)
+        if refined is not None:
+            _, rx, ry = refined
+            box = (rx, ry, rx + ref.width, ry + ref.height)
+            found.append((_similarity(screen.crop(box), ref), rx, ry))
+    return max(found) if found else None
+
+
+def _to_device(x, y, img, bounds):
+    """Screenshot pixels to the coordinates tap() takes."""
+    if not bounds:
+        return x, y
+    return (bounds["x"] + x * bounds["w"] / img.width, bounds["y"] + y * bounds["h"] / img.height)
+
+
+def find_image(ref, threshold=MATCH):
+    """Where a saved ref shows on the live screen now, as the (x, y) to tap at its centre, or None.
+
+    Unlike checkpoint(image=...), which checks the region the ref was cut from, this searches the
+    whole screen, so a tile, icon or button is found wherever the layout or orientation moved it.
+    """
+    from PIL import Image
+
+    screen, bounds = _capture()
+    with Image.open(REFS[ref]["path"]) as saved:
+        ref_img = saved.convert("RGB")
+    hit = _locate(screen, ref_img)
+    if hit is None or hit[0] < threshold:
+        return None
+    _, x, y = hit
+    return _to_device(x + ref_img.width / 2, y + ref_img.height / 2, screen, bounds)
+
+
+def tap_image(ref, threshold=MATCH, timeout=10.0):
+    """Find a saved ref anywhere on screen and tap it: the way to press things that have no text.
+
+    Waits up to `timeout` for it to show. A miss fails like a checkpoint, with a screenshot.
+    """
+    name = f"tap {ref}"
+    _emit("checkpoint", name=name, status="started")
+    deadline = time.time() + timeout
+    while True:
+        spot = _probe(lambda: find_image(ref, threshold))
+        if spot:
+            break
+        if time.time() >= deadline:
+            _miss(name, f"{ref!r} anywhere on screen")
+        time.sleep(POLL_S)
+    _emit("checkpoint", name=name, status="passed")
+    tap(round(spot[0]), round(spot[1]))
+    return spot
 
 
 def _image_ok(image, threshold):
@@ -136,6 +235,13 @@ def _evidence():
     return shot, seen
 
 
+def _miss(name, expected, **extra):
+    """Report a failed checkpoint with its evidence and stop the routine there."""
+    shot, seen = _evidence()
+    _emit("checkpoint", name=name, status="failed", expected=expected, seen_text=seen, screenshot=shot, **extra)
+    raise CheckpointMiss(name)
+
+
 def step(name):
     """Mark a phase of the routine; the step log shows these."""
     _emit("step", name=name)
@@ -155,11 +261,8 @@ def checkpoint(name, text=None, any_of=None, app=None, timeout=10.0, exact=False
     deadline = time.time() + timeout
     while not _matches(text, any_of, app, exact, image, threshold, changed_from):
         if time.time() >= deadline:
-            shot, seen = _evidence()
             extra = {"similarity": _probe(lambda: looks_like(image, threshold)[1])} if image else {}
-            _emit("checkpoint", name=name, status="failed", expected=_expected(text, any_of, app, image, changed_from),
-                  seen_text=seen, screenshot=shot, **extra)
-            raise CheckpointMiss(name)
+            _miss(name, _expected(text, any_of, app, image, changed_from), **extra)
         time.sleep(POLL_S)
     _emit("checkpoint", name=name, status="passed")
 
