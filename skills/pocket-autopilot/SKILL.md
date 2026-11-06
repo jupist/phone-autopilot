@@ -55,22 +55,32 @@ Names are lowercase letters, digits, and hyphens, up to 48 characters.
 A routine replays for weeks while lists reorder, apps reopen on other tabs, and toggles are already
 on. Write it so that ordinary variation never needs a repair.
 
-1. **Find elements by meaning, not position.** In order of preference: `tap_ui(label)` (the
+1. **Check the goal before the path.** Begin every phase by asking whether its goal already holds:
+   the timer is already on the Pomodoro screen, the music is already playing, Do Not Disturb is
+   already on. If it holds, skip the navigation. Apps resume where they were left, and that is often
+   exactly where the routine wants to be.
+2. **Otherwise start from a known place.** When the goal does not hold, tap a fixed anchor (a bottom
+   tab, Home) by its label and checkpoint it, instead of assuming the launch screen.
+3. **Find elements by meaning, not position.** In order of preference: `tap_ui(label)` (the
    accessibility tree: text, content description or resource id, and it sees icon buttons),
    `tap_text(label)` (visible text), an image ref, and raw coordinates last. Use coordinates only on a
-   canvas, and only after an image checkpoint has confirmed the screen.
-2. **Fastest path first, sturdy fallback after.** If the target is visible, tap it. Otherwise scroll a
+   canvas, and only after an image checkpoint has confirmed the screen. Never hardcode a coordinate per
+   orientation or screen size: derive it from a found element or from the screen bounds.
+4. **Fastest path first, sturdy fallback after.** If the target is visible, tap it. Otherwise scroll a
    little (`scroll_until`), and then fall back to the app's own search. Library order, feed position
    and "recently used" never matter then.
-3. **Start from a known place.** Apps resume wherever the user left them. At the start of each app,
-   tap a fixed anchor (a bottom tab, Home) by its label and checkpoint it, instead of assuming the
-   launch screen.
-4. **Reach a state; never flip one.** A toggle or timer can already be on. Read the current state
-   and act only if it is not the goal, so running the routine twice gives the same result. Branch on
-   every state you saw while exploring (`Claim` / `Collected`, running / stopped).
-5. **Wait for conditions, not time.** Use `checkpoint`, `wait_for_text` or `wait_stable`, and avoid
-   fixed `wait(2)` calls.
-6. **A repair adds; it does not replace.** When a checkpoint fails on a state you had not seen, add a
+5. **Reach a state; never flip one.** A toggle or timer can already be on. Read the current state
+   and act only if it is not the goal, so running the routine twice gives the same result. When the
+   screen cannot show the state, a read-only system query can (`shell("settings get global zen_mode")`).
+   Branch on every state you saw while exploring (`Claim` / `Collected`, running / stopped).
+6. **Ask the screen questions it can answer.** Animated screens (clocks, video, games) never settle, so
+   `screen()` returns no text there and text checkpoints always time out. Use image refs or
+   `changed_from` on those screens.
+7. **Wait for conditions, not time, and bound every loop.** Use `checkpoint`, `wait_for_text` or
+   `wait_stable` instead of fixed `wait(2)` calls, and give every scroll or retry loop a maximum.
+8. **Leave the phone tidy.** Close what you opened along the way (the notification shade, dialogs,
+   keyboards) and end on the screen the routine is for.
+9. **A repair adds; it does not replace.** When a checkpoint fails on a state you had not seen, add a
    branch for it and keep the path that already worked.
 
 ```python

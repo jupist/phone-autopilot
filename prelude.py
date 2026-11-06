@@ -120,11 +120,20 @@ def _expected(text, any_of, app, image=None, changed_from=None):
 
 
 def _evidence():
-    """Screenshot path and visible text for a failure. Never raises: the miss must still be reported."""
+    """Screenshot path and visible text for a failure. Never raises: the miss must still be reported.
+
+    Each half is captured on its own: animated screens (a ticking clock, video) never let the
+    accessibility tree settle, and the screenshot is the evidence a repair needs most then.
+    """
     try:
-        return screenshot(), [box["text"] for box in screen()][:40]
+        shot = screenshot()
     except Exception:
-        return None, []
+        shot = None
+    try:
+        seen = [box["text"] for box in screen()][:40]
+    except Exception as exc:
+        seen = [f"(screen text unavailable: {type(exc).__name__}; use the screenshot)"]
+    return shot, seen
 
 
 def step(name):

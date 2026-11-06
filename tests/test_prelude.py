@@ -94,7 +94,20 @@ def test_miss_is_still_reported_when_evidence_fails(capsys):
         ns["checkpoint"]("reward", text="Claim", timeout=0.05)
     failed = events(capsys)[-1]
     assert failed["status"] == "failed"
-    assert failed["screenshot"] is None and failed["seen_text"] == []
+    assert failed["screenshot"] is None
+    assert failed["seen_text"] == ["(screen text unavailable: RuntimeError; use the screenshot)"]
+
+
+def test_animated_screen_still_keeps_the_screenshot(capsys):
+    # A ticking clock never lets the accessibility tree settle: text fails, the capture must not.
+    fake = FakeScreen([["Home"]], shot="/abs/shot.png")
+    fake.screen = lambda min_confidence=0.3: (_ for _ in ()).throw(RuntimeError("tree unavailable"))
+    ns = load_prelude(fake)
+    with pytest.raises(ns["CheckpointMiss"]):
+        ns["checkpoint"]("settings", text="Focus", timeout=0.05)
+    failed = events(capsys)[-1]
+    assert failed["screenshot"] == "/abs/shot.png"
+    assert "screen text unavailable" in failed["seen_text"][0]
 
 
 def test_step_and_done_emit_events(capsys):
