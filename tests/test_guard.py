@@ -36,3 +36,28 @@ def test_launcher_and_allowed_apps_do_not_trip_the_guard(engine, phone):
     engine.approve("calm", meta["sha256"])
     record = engine.run_routine("calm", timeout_s=30, allowed_apps=["com.example.app"])
     assert record["ok"] is True, record["error"]
+
+
+def _guard_ns(foreground):
+    """guard.py in-process with a scripted foreground app (no watchdog thread: the list is empty)."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "guard.py").read_text(encoding="utf-8")
+    ns = {"ALLOWED_APPS": [], "current_app": lambda: next(foreground)}
+    exec(compile(src, "guard.py", "exec"), ns)
+    ns["_GUARD_DIALOG_GRACE_S"] = 0.3
+    ns["_GUARD_POLL_S"] = 0.03
+    return ns
+
+
+def test_a_permission_dialog_that_closes_itself_is_not_a_stop():
+    # A permanently denied permission: Android opens the dialog activity and it finishes unseen.
+    dialog = "com.google.android.permissioncontroller"
+    ns = _guard_ns(iter([dialog] + ["com.example.app"] * 100))
+    assert ns["_guard_dialog_stays"](dialog) is False
+
+
+def test_a_permission_dialog_that_stays_up_is_left_for_the_user():
+    import itertools
+    dialog = "com.google.android.permissioncontroller"
+    ns = _guard_ns(itertools.repeat(dialog))
+    assert ns["_guard_dialog_stays"](dialog) is True

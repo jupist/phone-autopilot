@@ -17,6 +17,10 @@ _GUARD_POLL_S = 0.6
 _GUARD_SYSTEM = {"com.android.systemui", "android"}
 # Android's "Allow <app> to ...?" dialog: only the user answers it, so the guard stops and leaves it up.
 _GUARD_PERMISSION_DIALOGS = {"com.google.android.permissioncontroller", "com.android.permissioncontroller"}
+# An app that asks for a permission the user already denied for good still opens the dialog activity,
+# which closes itself in a few hundred milliseconds without showing anything. Only a dialog still up
+# after this long is one the user has to answer.
+_GUARD_DIALOG_GRACE_S = 1.2
 
 
 def _guard_home_packages():
@@ -52,15 +56,30 @@ def _guard_violation(pkg):
     _thread.interrupt_main()
 
 
+def _guard_foreground():
+    try:
+        return str(current_app() or "")
+    except Exception:
+        return ""
+
+
+def _guard_dialog_stays(pkg):
+    """True when a permission dialog is still in front after the grace period: a real question."""
+    deadline = _guard_time.time() + _GUARD_DIALOG_GRACE_S
+    while _guard_time.time() < deadline:
+        _guard_time.sleep(_GUARD_POLL_S / 3)
+        if _guard_foreground() != pkg:
+            return False
+    return True
+
+
 def _guard_watch(allowed):
     while True:
-        try:
-            pkg = str(current_app() or "")
-        except Exception:
-            pkg = ""
+        pkg = _guard_foreground()
         if pkg and pkg not in allowed:
-            _guard_violation(pkg)
-            return
+            if pkg not in _GUARD_PERMISSION_DIALOGS or _guard_dialog_stays(pkg):
+                _guard_violation(pkg)
+                return
         _guard_time.sleep(_GUARD_POLL_S)
 
 
