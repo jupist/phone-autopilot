@@ -73,14 +73,20 @@ on. Write it so that ordinary variation never needs a repair.
    and act only if it is not the goal, so running the routine twice gives the same result. When the
    screen cannot show the state, a read-only system query can (`shell("settings get global zen_mode")`).
    Branch on every state you saw while exploring (`Claim` / `Collected`, running / stopped).
-6. **Ask the screen questions it can answer.** Animated screens (clocks, video, games) never settle, so
-   `screen()` returns no text there and text checkpoints always time out. Use image refs or
-   `changed_from` on those screens.
-7. **Wait for conditions, not time, and bound every loop.** Use `checkpoint`, `wait_for_text` or
+6. **Ask the screen questions it can answer.** Animated screens (clocks, video, games, Quick Settings)
+   never settle, so `screen()` returns no text there and text checkpoints always time out. Use image refs
+   or `changed_from` on those screens. A screen without text is not a dead end: confirm it by image, then
+   act.
+7. **Use the system's own switch for phone-wide state.** Do Not Disturb, media playback and similar
+   phone-wide settings have adb commands, which work the same on every phone and every layout:
+   `shell("cmd notification set_dnd priority")` (and `off`), read back with
+   `shell("settings get global zen_mode")` (`0` is off). Drive the screen for what lives inside apps.
+   Only change state the user asked for.
+8. **Wait for conditions, not time, and bound every loop.** Use `checkpoint`, `wait_for_text` or
    `wait_stable` instead of fixed `wait(2)` calls, and give every scroll or retry loop a maximum.
-8. **Leave the phone tidy.** Close what you opened along the way (the notification shade, dialogs,
+9. **Leave the phone tidy.** Close what you opened along the way (the notification shade, dialogs,
    keyboards) and end on the screen the routine is for.
-9. **A repair adds; it does not replace.** When a checkpoint fails on a state you had not seen, add a
+10. **A repair adds; it does not replace.** When a checkpoint fails on a state you had not seen, add a
    branch for it and keep the path that already worked.
 
 ```python
