@@ -74,8 +74,15 @@ For each action, use the highest rung that works on that screen:
 5. **Coordinates, last**, and only inside a region an image checkpoint has just confirmed. Derive them
    from a found element or the screen bounds; never hardcode one per orientation or screen size.
 
-When a rung is unavailable, step down instead of stopping. `screen()` raising `TreeUnavailable` or
-returning nothing means the screen never settles: use rung 4 and image checkpoints there.
+When a rung is unavailable, step down instead of stopping. `screen()` raising `TreeUnavailable` means
+the screen never settles (a clock, video, a playing track): use rung 4 and image checkpoints there. Never
+treat that error as an empty screen; it says nothing about what is showing.
+
+**Mind the cost.** Reading screen text (`screen()`, `find_text`, `tap_text`) takes about 2.5s, and about
+12s before it fails on a screen that never settles. A system query, `current_app()` or a key press takes
+under 0.2s, and an image check under 1s. So decide state with the cheapest reliable signal (is music
+playing? ask the media session, not the screen), read the text once and reuse it, and when exploring, do
+several steps per `phone_exec` call rather than one.
 
 ### How to structure a routine
 

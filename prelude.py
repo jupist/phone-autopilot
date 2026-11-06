@@ -33,12 +33,42 @@ def _probe(check):
         return False
 
 
-def _seen(query, exact):
-    return _probe(lambda: bool(find_text(query, exact=exact)))
+class _NoText(Exception):
+    """The screen never settles (a clock, video, a playing track), so Android will not read it."""
+
+
+def _texts():
+    """Visible text, read once per poll: a read costs about 2.5s, so it is never repeated per word."""
+    try:
+        return [box["text"] for box in screen()]
+    except Exception as exc:
+        # Each refusal costs ~10s inside uiautomator and the next read refuses again.
+        if type(exc).__name__ == "TreeUnavailable":
+            raise _NoText() from exc
+        raise
+
+
+def _has(texts, query, exact):
+    q = query.lower()
+    return any((t.lower() == q) if exact else (q in t.lower()) for t in texts)
 
 
 def _in_app(app):
     return _probe(lambda: app in str(current_app()))
+
+
+def open_app(name, timeout=10.0):
+    """Launch an app and return its package once it is in front.
+
+    Replaces phone-harness's open_app, which then waits for the screen to stop changing: on a
+    clock, a video or a playing track that never happens, and every launch cost its 6s timeout.
+    The checkpoint after a launch is what waits for the right screen.
+    """
+    pkg = send("apps.launch", name=name) or name
+    deadline = time.time() + timeout
+    while time.time() < deadline and not _in_app(pkg):
+        time.sleep(0.1)
+    return pkg
 
 
 def _capture():
@@ -193,15 +223,24 @@ def _image_ok(image, threshold):
 
 
 def _matches(text, any_of, app, exact, image=None, threshold=MATCH, changed_from=None):
+    """Cheapest condition first: the foreground app (~0.06s), images (~0.7s), then one text read."""
+    if app is not None and not _in_app(app):
+        return False
     if changed_from is not None and not _probe(lambda: changed(*changed_from)):
         return False
     if image is not None and not _image_ok(image, threshold):
         return False
-    if text is not None and not _seen(text, exact):
+    if text is None and any_of is None:
+        return True
+    try:
+        texts = _texts()
+    except _NoText:
+        raise
+    except Exception:  # mid-transition: not seen yet
         return False
-    if any_of is not None and not any(_seen(t, exact) for t in any_of):
+    if text is not None and not _has(texts, text, exact):
         return False
-    return app is None or _in_app(app)
+    return any_of is None or any(_has(texts, t, exact) for t in any_of)
 
 
 def _expected(text, any_of, app, image=None, changed_from=None):
@@ -218,7 +257,7 @@ def _expected(text, any_of, app, image=None, changed_from=None):
     return ", ".join(parts)
 
 
-def _evidence():
+def _evidence(read_text=True):
     """Screenshot path and visible text for a failure. Never raises: the miss must still be reported.
 
     Each half is captured on its own: animated screens (a ticking clock, video) never let the
@@ -228,6 +267,8 @@ def _evidence():
         shot = screenshot()
     except Exception:
         shot = None
+    if not read_text:  # known unreadable: another read would only burn uiautomator's ~10s wait
+        return shot, ["(screen text unavailable: TreeUnavailable; use the screenshot)"]
     try:
         seen = [box["text"] for box in screen()][:40]
     except Exception as exc:
@@ -235,9 +276,9 @@ def _evidence():
     return shot, seen
 
 
-def _miss(name, expected, **extra):
+def _miss(name, expected, read_text=True, **extra):
     """Report a failed checkpoint with its evidence and stop the routine there."""
-    shot, seen = _evidence()
+    shot, seen = _evidence(read_text)
     _emit("checkpoint", name=name, status="failed", expected=expected, seen_text=seen, screenshot=shot, **extra)
     raise CheckpointMiss(name)
 
@@ -259,7 +300,14 @@ def checkpoint(name, text=None, any_of=None, app=None, timeout=10.0, exact=False
     """
     _emit("checkpoint", name=name, status="started")
     deadline = time.time() + timeout
-    while not _matches(text, any_of, app, exact, image, threshold, changed_from):
+    while True:
+        try:
+            if _matches(text, any_of, app, exact, image, threshold, changed_from):
+                break
+        except _NoText:
+            _miss(name, _expected(text, any_of, app, image, changed_from)
+                  + " (this screen never settles, so it has no readable text: check it with an image ref)",
+                  read_text=False)
         if time.time() >= deadline:
             extra = {"similarity": _probe(lambda: looks_like(image, threshold)[1])} if image else {}
             _miss(name, _expected(text, any_of, app, image, changed_from), **extra)

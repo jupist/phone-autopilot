@@ -116,3 +116,53 @@ def test_step_and_done_emit_events(capsys):
     ns["done"](claimed=True, count=2)
     assert events(capsys) == [{"event": "step", "name": "open"},
                               {"event": "done", "claimed": True, "count": 2}]
+
+
+def test_one_text_read_per_poll_however_many_words(capsys):
+    fake = FakeScreen([["Collected"]])
+    ns = load_prelude(fake)
+    ns["checkpoint"]("reward", any_of=["Claim", "Come back", "Collected"])
+    assert fake.calls == 1  # a read costs ~2.5s on a phone: never once per word
+
+
+def test_wrong_app_is_known_without_reading_text(capsys):
+    fake = FakeScreen([["Home"]], app="com.other")
+    ns = load_prelude(fake)
+    with pytest.raises(ns["CheckpointMiss"]):
+        ns["checkpoint"]("home", text="Home", app="com.example", timeout=0.05)
+    assert fake.calls == 1  # only the failure record's evidence, never a poll
+
+
+def test_a_screen_without_text_fails_at_once_and_says_to_use_an_image(capsys):
+    import time
+
+    class TreeUnavailable(RuntimeError):
+        pass
+
+    fake = FakeScreen([["Focus"]], shot="/abs/shot.png")
+    fake.screen = lambda min_confidence=0.3: (_ for _ in ()).throw(TreeUnavailable("could not get idle state"))
+    ns = load_prelude(fake)
+    started = time.time()
+    with pytest.raises(ns["CheckpointMiss"]):
+        ns["checkpoint"]("settings", text="Focus", timeout=30)
+    assert time.time() - started < 5  # not 30s of 11s refusals
+    failed = events(capsys)[-1]
+    assert "check it with an image ref" in failed["expected"]
+    assert failed["screenshot"] == "/abs/shot.png"
+    assert failed["seen_text"] == ["(screen text unavailable: TreeUnavailable; use the screenshot)"]
+
+
+def test_open_app_returns_once_the_app_is_in_front():
+    import time
+    fronts = iter(["com.launcher", "com.launcher", "com.example.app"])
+    current = {"app": "com.launcher"}
+
+    def current_app():
+        current["app"] = next(fronts, current["app"])
+        return current["app"]
+
+    ns = {"send": lambda op, **kw: kw["name"], "current_app": current_app}
+    exec(compile(PRELUDE, "prelude.py", "exec"), ns)
+    started = time.time()
+    assert ns["open_app"]("com.example.app") == "com.example.app"
+    assert time.time() - started < 1
