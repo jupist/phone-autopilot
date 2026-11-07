@@ -167,3 +167,53 @@ def test_answers_older_than_the_question_are_ignored(tmp_path):
     answers.write_text(json.dumps({FOREIGN: {"answer": "allowed", "at": 100.0}}))
     assert ns["_guard_answer"](FOREIGN, 99.0) == "allowed"
     assert ns["_guard_answer"](FOREIGN, 101.0) is None
+
+
+LAUNCH = "send('apps.launch', name='com.spotify.music')\nprint('LAUNCHED')\n"
+
+
+def _start_launch(engine, phone):
+    phone.set_frames([{"app": "com.example.app", "texts": ["Home"]}])
+    meta = engine.save_routine("launcher", LAUNCH)
+    engine.approve("launcher", meta["sha256"])
+    result = {}
+    thread = threading.Thread(target=lambda: result.update(engine.run_routine("launcher", timeout_s=60)))
+    thread.start()
+    return thread, result
+
+
+def test_a_launch_by_package_asks_before_the_app_opens(engine, phone, allowlist, monkeypatch):
+    monkeypatch.setattr(engine, "ASK_WAIT_S", 30)
+    thread, result = _start_launch(engine, phone)
+    assert _wait_for_question(engine)["app"] == "com.spotify.music"
+    engine.allow_app("com.spotify.music", allowlist.save)
+    thread.join(30)
+    assert result["ok"] is True, result["error"]
+    out = result["output_tail"]
+    assert out.index("phone-autopilot: paused. com.spotify.music") < out.index("SEND apps.launch") < out.index("LAUNCHED")
+
+
+def test_not_now_before_a_launch_never_opens_the_app(engine, phone, allowlist, monkeypatch):
+    monkeypatch.setattr(engine, "ASK_WAIT_S", 30)
+    thread, result = _start_launch(engine, phone)
+    _wait_for_question(engine)
+    engine.dismiss_app_request("com.spotify.music")
+    thread.join(30)
+    assert result["error"].startswith("stopped: the user chose Not now for com.spotify.music")
+    assert "SEND apps.launch" not in result["output_tail"]
+    assert "SEND nav.home" not in result["output_tail"]  # it never left the screen it was on
+
+
+@pytest.mark.parametrize("helper, args, kwargs, target", [
+    ("open_app", ("com.spotify.music",), {}, "com.spotify.music"),
+    ("open_app", ("Spotify",), {}, None),  # a label: the watchdog catches it once it opens
+    ("send", ("apps.launch",), {"name": "com.spotify.music"}, "com.spotify.music"),
+    ("send", ("nav.home",), {}, None),
+    ("shell", ("am start -n com.spotify.music/.MainActivity",), {}, "com.spotify.music"),
+    ("shell", ("monkey -p com.rishukumarcodes.Standbyclock -c android.intent.category.LAUNCHER 1",), {},
+     "com.rishukumarcodes.Standbyclock"),
+    ("shell", ("am start -a android.intent.action.VIEW -d spotify:playlist:1",), {}, None),
+    ("shell", ("settings get global zen_mode",), {}, None),
+])
+def test_launch_targets_known_up_front(helper, args, kwargs, target):
+    assert _guard_ns(iter(()))["_guard_launch_target"](helper, args, kwargs) == target

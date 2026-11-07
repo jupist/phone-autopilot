@@ -5,7 +5,9 @@ _GUARD_ASK. A script can reach any app (a tap on a launcher label, a notificatio
 so a static check of the code cannot keep it out of apps the user has not allowed. A watchdog
 thread checks the foreground app instead.
 
-On an app the user has not allowed yet, the script pauses where it is: every phone helper the
+A launch whose target is known up front (open_app or apps.launch with a package name, `am start
+-n` or `monkey -p` in shell) asks before the app opens. Any other way into an app is caught by
+the watchdog once the app is in front: the script pauses where it is, and every phone helper the
 script calls waits, so it neither acts in the app nor reads it. The guard writes asking.json,
 which the plugin turns into an Allow / Not now card, and polls answers.json. Allow resumes the
 script on the same screen; Not now, or no answer in time, sends the phone Home and stops it.
@@ -16,6 +18,7 @@ the dialog for the user. Only stdlib imports, same as prelude.py.
 import _thread
 import json as _guard_json
 import os as _guard_os
+import re as _guard_re
 import threading as _guard_threading
 import time as _guard_time
 
@@ -38,28 +41,70 @@ _GUARD_OPEN.set()
 _GUARD_STOPPED = [False]
 # Seconds the script spent paused, so the prelude keeps the wait out of timeouts and timings.
 _GUARD_PAUSED_S = [0.0]
+# Apps the script may use: the allowlist, system surfaces, launchers, and apps allowed while it runs.
+_GUARD_ALLOWED = set()
+_GUARD_ACTIVE = [False]
+_GUARD_ASKING = _guard_threading.Lock()  # the script and the watchdog never ask at once
+_GUARD_PACKAGE = _guard_re.compile(r"[A-Za-z]\w*(?:\.[A-Za-z]\w*)+")
+_GUARD_SHELL_LAUNCH = _guard_re.compile(r"\b(?:am\s+start(?:-activity)?|monkey)\b")
+_GUARD_SHELL_TARGET = _guard_re.compile(r"(?:-n\s+([\w.]+)/|(?:-p|--package)\s+([\w.]+))")
 
 
-def _guard_gate(fn):
-    """Make a phone helper wait while the guard is asking the user about an app."""
+def _guard_launch_target(helper, args, kwargs):
+    """The package a helper call is about to launch, when the call names it; else None."""
+    target = None
+    if helper == "open_app":
+        target = args[0] if args else kwargs.get("name")
+    elif helper == "send" and args and args[0] == "apps.launch":
+        target = kwargs.get("name")
+    elif helper == "shell":
+        cmd = str(args[0] if args else kwargs.get("cmd") or "")
+        if _GUARD_SHELL_LAUNCH.search(cmd):
+            found = _GUARD_SHELL_TARGET.search(cmd)
+            target = found and (found.group(1) or found.group(2))
+    target = str(target or "")
+    return target if _GUARD_PACKAGE.fullmatch(target) else None
+
+
+def _guard_wait_open():
+    began = _guard_time.monotonic()
+    while not _GUARD_OPEN.wait(0.2):
+        pass
+    _GUARD_PAUSED_S[0] += _guard_time.monotonic() - began
+    if _GUARD_STOPPED[0]:
+        raise SystemExit(1)  # the guard already said why
+
+
+def _guard_ask_before_launch(pkg):
+    """Ask about an app before the script opens it; exits the script unless the user allows it."""
+    began = _guard_time.monotonic()
+    answer = _guard_ask(pkg)
+    _GUARD_PAUSED_S[0] += _guard_time.monotonic() - began
+    if answer != "allowed":
+        _guard_stop(pkg, answer or "no_answer", opened=False)
+        raise SystemExit(1)
+    _guard_allow(pkg)
+
+
+def _guard_gate(fn, helper):
+    """Make a phone helper wait while the guard is asking, and ask before it launches a new app."""
     def gated(*args, **kwargs):
-        if not _GUARD_OPEN.is_set() and _guard_threading.current_thread() is _guard_threading.main_thread():
-            began = _guard_time.monotonic()
-            while not _GUARD_OPEN.wait(0.2):
-                pass
-            _GUARD_PAUSED_S[0] += _guard_time.monotonic() - began
-            if _GUARD_STOPPED[0]:
-                raise SystemExit(1)  # the guard already said why
+        if _guard_threading.current_thread() is _guard_threading.main_thread():
+            if not _GUARD_OPEN.is_set():
+                _guard_wait_open()
+            pkg = _guard_launch_target(helper, args, kwargs) if _GUARD_ACTIVE[0] else None
+            if pkg and pkg not in _GUARD_ALLOWED:
+                _guard_ask_before_launch(pkg)
         return fn(*args, **kwargs)
 
-    gated.__name__, gated.__doc__ = getattr(fn, "__name__", "helper"), getattr(fn, "__doc__", None)
+    gated.__name__, gated.__doc__ = getattr(fn, "__name__", helper), getattr(fn, "__doc__", None)
     return gated
 
 
 # Every public callable here is a phone-harness helper. The watchdog thread passes every gate.
 for _guard_name, _guard_value in list(globals().items()):
     if not _guard_name.startswith("_") and callable(_guard_value) and not isinstance(_guard_value, type):
-        globals()[_guard_name] = _guard_gate(_guard_value)
+        globals()[_guard_name] = _guard_gate(_guard_value, _guard_name)
 
 
 def _guard_home_packages():
@@ -103,6 +148,13 @@ def _guard_answer(pkg, asked_at):
 
 def _guard_ask(pkg):
     """Pause the script until the user answers: 'allowed', 'denied', or None for no answer in time."""
+    with _GUARD_ASKING:
+        if pkg in _GUARD_ALLOWED:  # answered while the other thread was asking
+            return "allowed"
+        return _guard_ask_now(pkg)
+
+
+def _guard_ask_now(pkg):
     wait_s = min(_GUARD_ASK["wait_s"],
                  _GUARD_STARTED + _GUARD_ASK["script_timeout_s"] - _GUARD_STOP_MARGIN_S - _guard_time.time())
     if wait_s <= 0:
@@ -131,8 +183,17 @@ def _guard_ask(pkg):
             pass
 
 
-def _guard_stop(pkg, reason):
-    """reason: 'dialog' (Android permission dialog), 'denied' (Not now) or 'no_answer'."""
+def _guard_allow(pkg):
+    _GUARD_ALLOWED.add(pkg)
+    _guard_event(event="allowed", app=pkg)
+    _GUARD_OPEN.set()
+
+
+def _guard_stop(pkg, reason, opened=True):
+    """reason: 'dialog' (Android permission dialog), 'denied' (Not now) or 'no_answer'.
+
+    `opened` is False when the script asked before launching: the phone never left its screen.
+    """
     dialog = reason == "dialog"
     _guard_event(event="guard", status="needs_user" if dialog else "blocked", app=pkg, reason=reason)
     if dialog:
@@ -145,10 +206,11 @@ def _guard_stop(pkg, reason):
         else:
             print(f"phone-autopilot: stopped. Nobody answered whether {pkg} may be used. The user can "
                   f"allow it with Allow in the phone pane, or by typing /routines allow {pkg}", flush=True)
-        try:
-            send("nav.home")
-        except Exception:
-            pass
+        if opened:
+            try:
+                send("nav.home")
+            except Exception:
+                pass
     _GUARD_STOPPED[0] = True
     if dialog:  # the script was not paused: interrupt whatever it is doing
         _thread.interrupt_main()
@@ -172,10 +234,10 @@ def _guard_dialog_stays(pkg):
     return True
 
 
-def _guard_watch(allowed):
-    while True:
+def _guard_watch():
+    while not _GUARD_STOPPED[0]:
         pkg = _guard_foreground()
-        if pkg and pkg not in allowed:
+        if pkg and pkg not in _GUARD_ALLOWED and _GUARD_OPEN.is_set():
             if pkg in _GUARD_PERMISSION_DIALOGS:
                 if _guard_dialog_stays(pkg):
                     _guard_stop(pkg, "dialog")
@@ -185,25 +247,24 @@ def _guard_watch(allowed):
                 if answer != "allowed":
                     _guard_stop(pkg, answer or "no_answer")
                     return
-                allowed.add(pkg)
-                _guard_event(event="allowed", app=pkg)
-                _GUARD_OPEN.set()
+                _guard_allow(pkg)
         _guard_time.sleep(_GUARD_POLL_S)
 
 
 def _guard_begin():
     """Start from Home when the user left another app in front: the script did not open it, so
     there is nothing to ask about, and the script must not read it."""
-    allowed = _guard_allowed()
+    _GUARD_ALLOWED.update(_guard_allowed())
     pkg = _guard_foreground()
-    if pkg and pkg not in allowed and pkg not in _GUARD_PERMISSION_DIALOGS:
+    if pkg and pkg not in _GUARD_ALLOWED and pkg not in _GUARD_PERMISSION_DIALOGS:
         try:
             send("nav.home")
             print(f"phone-autopilot: {pkg} was open and is not an allowed app, so the script starts "
                   f"from the Home screen.", flush=True)
         except Exception:
             pass
-    _guard_threading.Thread(target=_guard_watch, args=(allowed,), daemon=True).start()
+    _GUARD_ACTIVE[0] = True
+    _guard_threading.Thread(target=_guard_watch, daemon=True).start()
 
 
 if globals().get("__name__") == "__main__":  # in a script, not when a test loads the functions

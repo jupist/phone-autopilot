@@ -186,10 +186,11 @@ done(moves=len(PARAMS["moves"]))
 
 ## Pitfalls
 
-- **Apps ask first.** The first time a script brings an app the user has not allowed to the
-  front, it pauses there and the phone pane asks the user to Allow it or choose Not now; its
-  next phone call waits for the answer. Before a script first opens an app, say in chat which
-  app and why, so the card is no surprise. Give that `phone_exec` call a `timeout_s` of at least
+- **Apps ask first.** Before a script opens an app the user has not allowed, the phone pane
+  asks them to Allow it or choose Not now, and the script waits for the answer. Open apps with
+  `open_app("<package>")` so the question comes before the app appears; an app reached any
+  other way pauses the script once it is in front. Before a script first opens an app, say in
+  chat which app and why, so the card is no surprise. Give that `phone_exec` call a `timeout_s` of at least
   90, because the wait comes out of the call's own time. After Allow the script carries on by
   itself. `stopped: the user chose Not now for <app>` means no: do not use that app unless they
   ask. `stopped: nobody answered` means they missed the card: ask them in chat, and retry only

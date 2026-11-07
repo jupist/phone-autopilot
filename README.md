@@ -81,16 +81,19 @@ screen.
 ## Apps ask first
 
 Routines and `phone_exec` scripts ask before they use an app, the way a phone
-asks for a permission. The first time a script brings a new app to the front,
-it pauses right there: every phone action and screen read waits, so it neither
-taps nor reads anything in that app. The phone pane shows a card:
+asks for a permission. When a script launches an app you have not allowed by
+its package name (`open_app("com.spotify.music")`, or `am start -n` /
+`monkey -p` in `shell`), it asks before the app opens. If it reaches an app
+another way (a launcher icon, a notification, a link), it pauses as soon as
+the app is in front: every phone action and screen read waits, so it neither
+taps nor reads anything there. Either way the phone pane shows a card:
 
 **Routine deep-work wants to use an app: com.spotify.music [Allow] [Not now]**
 
 - **Allow** saves the app and the script carries on from the same screen. The
   time it spent waiting does not count against its checkpoints.
-- **Not now** sends the phone Home and stops the script. The agent is told you
-  said no.
+- **Not now** stops the script, leaving the phone where it was if the app
+  never opened, or sending it Home if it had. The agent is told you said no.
 - With no answer in 2 minutes (or before the script's own time limit), the
   phone goes Home, the script stops, and the card stays for later.
 
