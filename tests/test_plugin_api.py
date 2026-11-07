@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 API_PATH = ROOT / "dashboard" / "plugin_api.py"
-PREFIX = "/api/plugins/pocket-autopilot"
+PREFIX = "/api/plugins/phone-autopilot"
 RUN_ID = "20260101-120000-abcd"
 SRC_W, SRC_H = 540, 1200
 DEV_W, DEV_H = 1080, 2400
@@ -102,7 +102,7 @@ def _stub_engine(data_dir):
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    spec = importlib.util.spec_from_file_location("pocket_autopilot_api_under_test", API_PATH)
+    spec = importlib.util.spec_from_file_location("phone_autopilot_api_under_test", API_PATH)
     api = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(api)
     data_dir = tmp_path / "data"

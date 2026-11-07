@@ -12,8 +12,8 @@ from typing import Any, Callable
 
 from . import engine, review
 
-PLUGIN = "pocket-autopilot"
-log = logging.getLogger("pocket_autopilot")
+PLUGIN = "phone-autopilot"
+log = logging.getLogger("phone_autopilot")
 DEFAULT_TIMEOUT_S = 300
 MAX_TIMEOUT_S = 900
 DEFAULT_RUNS_LIMIT = 20

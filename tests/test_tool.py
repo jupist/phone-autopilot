@@ -22,29 +22,29 @@ def _unimplemented(name):
 
 
 def _load_plugin():
-    """Load the plugin dir as package `pocket_autopilot`, with a stub engine until engine.py exists."""
-    if "pocket_autopilot" in sys.modules:
-        return sys.modules["pocket_autopilot"]
-    if not (PLUGIN_DIR / "engine.py").exists() and "pocket_autopilot.engine" not in sys.modules:
-        stub = types.ModuleType("pocket_autopilot.engine")
-        stub.PLUGIN = "pocket-autopilot"
+    """Load the plugin dir as package `phone_autopilot`, with a stub engine until engine.py exists."""
+    if "phone_autopilot" in sys.modules:
+        return sys.modules["phone_autopilot"]
+    if not (PLUGIN_DIR / "engine.py").exists() and "phone_autopilot.engine" not in sys.modules:
+        stub = types.ModuleType("phone_autopilot.engine")
+        stub.PLUGIN = "phone-autopilot"
         stub.RoutineError = type("RoutineError", (ValueError,), {})
         for name in ("validate_name", "list_routines", "get_routine", "save_routine", "approve",
                      "is_approved", "code_sha256", "delete_routine", "list_runs", "get_run",
                      "run_routine", "phone_harness_available", "data_dir"):
             setattr(stub, name, _unimplemented(name))
-        sys.modules["pocket_autopilot.engine"] = stub
+        sys.modules["phone_autopilot.engine"] = stub
     spec = importlib.util.spec_from_file_location(
-        "pocket_autopilot", PLUGIN_DIR / "__init__.py", submodule_search_locations=[str(PLUGIN_DIR)])
+        "phone_autopilot", PLUGIN_DIR / "__init__.py", submodule_search_locations=[str(PLUGIN_DIR)])
     module = importlib.util.module_from_spec(spec)
-    sys.modules["pocket_autopilot"] = module
+    sys.modules["phone_autopilot"] = module
     spec.loader.exec_module(module)
     return module
 
 
 _load_plugin()
-tool = importlib.import_module("pocket_autopilot.tool")
-engine = importlib.import_module("pocket_autopilot.engine")
+tool = importlib.import_module("phone_autopilot.tool")
+engine = importlib.import_module("phone_autopilot.engine")
 
 
 def _meta(**overrides):
@@ -101,7 +101,7 @@ def test_save_always_asks_with_sha_prefix_rule_key(calls, monkeypatch):
         tool_name="routine", args={"action": "save", "name": "daily-claim", "code": CODE},
         task_id="t1", session_id="s1", tool_call_id="c1")
     assert directive["action"] == "approve"
-    assert directive["rule_key"] == f"pocket-autopilot:save:daily-claim:{SHA[:12]}"
+    assert directive["rule_key"] == f"phone-autopilot:save:daily-claim:{SHA[:12]}"
     assert "save routine 'daily-claim' (v3, 3 lines)" in directive["message"]
     assert "ensure_device()" in directive["message"]
 
@@ -144,7 +144,7 @@ def test_run_unapproved_routine_asks(calls):
     directive = tool.on_pre_tool_call(tool_name="routine",
                                       args={"action": "run", "name": "daily-claim"})
     assert directive["action"] == "approve"
-    assert directive["rule_key"] == f"pocket-autopilot:run:daily-claim:{SHA[:12]}"
+    assert directive["rule_key"] == f"phone-autopilot:run:daily-claim:{SHA[:12]}"
     assert "run routine 'daily-claim' (v2, 3 lines)" in directive["message"]
 
 

@@ -1,4 +1,4 @@
-"""Pocket Autopilot: teach a phone task once, replay it without the model.
+"""Phone Autopilot: teach a phone task once, replay it without the model.
 
 Companion to the phone-harness plugin. The agent explores with phone_exec, saves what worked
 as a routine (approved by the user), and replays it through the `routine` tool or /routines.
@@ -9,7 +9,7 @@ import functools
 from pathlib import Path
 
 
-PLUGIN = "pocket-autopilot"
+PLUGIN = "phone-autopilot"
 SKILL_MD = Path(__file__).parent / "skills" / PLUGIN / "SKILL.md"
 
 BLUEPRINT_KEY = "daily-routine"
@@ -23,7 +23,7 @@ BLUEPRINT_SLOTS = [
      "options": ["origin", "local"], "strict": False},
 ]
 BLUEPRINT_PROMPT = (
-    "Run the Pocket Autopilot routine '{routine}' with the routine tool (action run). Report the "
+    "Run the Phone Autopilot routine '{routine}' with the routine tool (action run). Report the "
     "result in one or two lines. If it fails, do not try to repair it unattended: say which "
     "checkpoint failed, include the failure screenshot path, and tell me to reply 'fix {routine}' "
     "in a chat where I can approve the repair."

@@ -13,7 +13,7 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-PREFIX = "/api/plugins/pocket-autopilot"
+PREFIX = "/api/plugins/phone-autopilot"
 DIALOG = "com.google.android.permissioncontroller"
 
 
@@ -91,15 +91,15 @@ def test_revoke_and_dismiss(engine, allowlist):
 @pytest.fixture
 def plugin(tmp_path, monkeypatch):
     _load_plugin()
-    eng = importlib.import_module("pocket_autopilot.engine")
+    eng = importlib.import_module("phone_autopilot.engine")
     monkeypatch.setattr(eng, "data_dir", lambda: tmp_path / "pdata")
     store, _ = _store_allowlist(eng, monkeypatch)
-    return types.SimpleNamespace(engine=eng, apps=store, tool=importlib.import_module("pocket_autopilot.tool"),
-                                 commands=importlib.import_module("pocket_autopilot.commands"))
+    return types.SimpleNamespace(engine=eng, apps=store, tool=importlib.import_module("phone_autopilot.tool"),
+                                 commands=importlib.import_module("phone_autopilot.commands"))
 
 
 def test_a_guarded_phone_exec_result_queues_a_request(plugin):
-    output = 'hi\n@@POCKET {"event": "guard", "status": "blocked", "app": "com.android.settings"}\n'
+    output = 'hi\n@@AUTOPILOT {"event": "guard", "status": "blocked", "app": "com.android.settings"}\n'
     plugin.tool.on_post_tool_call(tool_name="phone_exec", result=json.dumps({"success": False, "output": output}))
     plugin.tool.on_post_tool_call(tool_name="terminal", result=output)
     assert [r["app"] for r in plugin.engine.app_requests()] == ["com.android.settings"]
@@ -124,7 +124,7 @@ def test_the_routine_tool_has_no_way_to_grant_an_app(plugin):
 
 def test_pane_api_lists_and_dismisses_and_an_allowed_app_stops_asking(engine, allowlist):
     from test_plugin_api import API_PATH
-    spec = importlib.util.spec_from_file_location("pocket_autopilot_api_apps", API_PATH)
+    spec = importlib.util.spec_from_file_location("phone_autopilot_api_apps", API_PATH)
     api = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(api)
     api._engine_mod = engine

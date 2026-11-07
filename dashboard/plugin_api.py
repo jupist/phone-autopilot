@@ -1,6 +1,6 @@
-"""Pocket Autopilot dashboard API: live phone view, phone controls, routines.
+"""Phone Autopilot dashboard API: live phone view, phone controls, routines.
 
-Routes mount at /api/plugins/pocket-autopilot/<path>. Handlers are sync so FastAPI
+Routes mount at /api/plugins/phone-autopilot/<path>. Handlers are sync so FastAPI
 runs them on the threadpool, and every one returns JSON instead of raising.
 Device access goes through phone-harness's transport (Android or iPhone); routines
 and run records come from engine.py, which is loaded by path so this module never
@@ -71,7 +71,7 @@ def _safe(fn):
         except _ApiError as exc:
             return _fail(exc.status, str(exc))
         except Exception as exc:
-            log.warning("pocket-autopilot %s failed: %s", fn.__name__, exc, exc_info=True)
+            log.warning("phone-autopilot %s failed: %s", fn.__name__, exc, exc_info=True)
             return _fail(500, f"{type(exc).__name__}: {exc}")
 
     return wrapper
@@ -89,7 +89,7 @@ def _engine():
     global _engine_mod
     with _init_lock:
         if _engine_mod is None:
-            spec = importlib.util.spec_from_file_location("pocket_autopilot_engine", _ENGINE_PATH)
+            spec = importlib.util.spec_from_file_location("phone_autopilot_engine", _ENGINE_PATH)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             _engine_mod = module
@@ -359,7 +359,7 @@ def _run_in_background(eng, name, params, timeout_s):
     try:
         eng.run_routine(name, params=params, timeout_s=timeout_s, require_approved=True)
     except Exception:
-        log.exception("pocket-autopilot: background run of %s failed", name)
+        log.exception("phone-autopilot: background run of %s failed", name)
 
 
 @_route("post", "/routines/{name}/run")
@@ -377,7 +377,7 @@ def start_routine(name: str, body: Optional[dict] = None):
     if not meta.get("approved"):
         raise _ApiError(403, f"routine '{name}' is not approved yet; ask the agent to run it once to approve")
     threading.Thread(target=_run_in_background, args=(eng, name, params, timeout_s),
-                     name=f"pocket-autopilot-run-{name}", daemon=True).start()
+                     name=f"phone-autopilot-run-{name}", daemon=True).start()
     return {"ok": True, "started": True, "routine": name}
 
 

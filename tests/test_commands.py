@@ -15,20 +15,20 @@ SHA = hashlib.sha256(CODE.encode()).hexdigest()
 
 
 def _load_plugin():
-    """Load the plugin dir as the package `pocket_autopilot`, the way Hermes imports it."""
-    if "pocket_autopilot" in sys.modules:
+    """Load the plugin dir as the package `phone_autopilot`, the way Hermes imports it."""
+    if "phone_autopilot" in sys.modules:
         return
     spec = importlib.util.spec_from_file_location(
-        "pocket_autopilot", PLUGIN_DIR / "__init__.py", submodule_search_locations=[str(PLUGIN_DIR)])
+        "phone_autopilot", PLUGIN_DIR / "__init__.py", submodule_search_locations=[str(PLUGIN_DIR)])
     module = importlib.util.module_from_spec(spec)
-    sys.modules["pocket_autopilot"] = module
+    sys.modules["phone_autopilot"] = module
     spec.loader.exec_module(module)
 
 
 _load_plugin()
-commands = importlib.import_module("pocket_autopilot.commands")
-engine = importlib.import_module("pocket_autopilot.engine")
-plugin = sys.modules["pocket_autopilot"]
+commands = importlib.import_module("phone_autopilot.commands")
+engine = importlib.import_module("phone_autopilot.engine")
+plugin = sys.modules["phone_autopilot"]
 
 
 def _routines(raw_args):
@@ -183,11 +183,11 @@ def test_register_wires_tool_hook_command_blueprint_and_skill():
     plugin.register(ctx)
 
     [tool_kwargs] = ctx.tools
-    assert tool_kwargs["name"] == "routine" and tool_kwargs["toolset"] == "pocket-autopilot"
+    assert tool_kwargs["name"] == "routine" and tool_kwargs["toolset"] == "phone-autopilot"
     assert tool_kwargs["schema"]["name"] == "routine"
     assert callable(tool_kwargs["check_fn"]) and callable(tool_kwargs["handler"])
 
-    tool_mod = importlib.import_module("pocket_autopilot.tool")
+    tool_mod = importlib.import_module("phone_autopilot.tool")
     assert ctx.hooks == [("pre_tool_call", tool_mod.on_pre_tool_call), ("post_tool_call", tool_mod.on_post_tool_call)]
 
     [(command_name, command_kwargs)] = ctx.commands
@@ -201,7 +201,7 @@ def test_register_wires_tool_hook_command_blueprint_and_skill():
     assert "{routine}" in blueprint["prompt_template"]
 
     [(skill_name, skill_path, skill_kwargs)] = ctx.skills
-    assert skill_name == "pocket-autopilot"
+    assert skill_name == "phone-autopilot"
     assert skill_path.name == "SKILL.md" and skill_path.is_file()
     # Hermes lists the skill by what it is given; the skill index shows 60 characters.
     description = skill_kwargs["description"]

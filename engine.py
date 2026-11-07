@@ -1,8 +1,8 @@
-"""Storage and runner for Pocket Autopilot routines.
+"""Storage and runner for Phone Autopilot routines.
 
 Loaded standalone by path (the dashboard does this), so it imports nothing from the
 plugin. A run pipes the routine to `python -m phone_harness.run` the same way
-phone-harness's own Hermes plugin does, and streams the `@@POCKET` events it prints.
+phone-harness's own Hermes plugin does, and streams the `@@AUTOPILOT` events it prints.
 """
 
 from __future__ import annotations
@@ -27,11 +27,11 @@ from collections import deque
 from pathlib import Path
 from typing import Callable
 
-PLUGIN = "pocket-autopilot"
+PLUGIN = "phone-autopilot"
 MAX_RUNS = 50
 LOCK_WAIT_S = 120
 JOIN_S = 10
-EVENT_PREFIX = "@@POCKET "
+EVENT_PREFIX = "@@AUTOPILOT "
 TAIL_LINES = 200
 TAIL_CHARS = 4000
 _SECRET_SUFFIXES = ("_KEY", "_TOKEN", "_SECRET", "_PASSWORD")
@@ -39,7 +39,7 @@ _NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,47}")
 _RUN_ID_RE = re.compile(r"\d{8}-\d{6}-[0-9a-f]{4}")
 _PRELUDE = Path(__file__).with_name("prelude.py")
 _GUARD = Path(__file__).with_name("guard.py")
-log = logging.getLogger("pocket_autopilot")
+log = logging.getLogger("phone_autopilot")
 
 
 class RoutineError(ValueError):
@@ -51,7 +51,7 @@ class RoutineError(ValueError):
 
 
 def data_dir() -> Path:
-    """<HERMES_HOME>/plugin-data/pocket-autopilot/, resolved per call so it follows the active profile."""
+    """<HERMES_HOME>/plugin-data/phone-autopilot/, resolved per call so it follows the active profile."""
     from plugins.plugin_storage import plugin_data_dir
     return plugin_data_dir(PLUGIN)
 
@@ -136,7 +136,7 @@ _BLANK_STDDEV = 6.0
 @functools.lru_cache(maxsize=1)
 def _image_search():
     """prelude.py's image search, so a ref is vetted by the same code that will look for it."""
-    spec = importlib.util.spec_from_file_location("pocket_autopilot_prelude", _PRELUDE)
+    spec = importlib.util.spec_from_file_location("phone_autopilot_prelude", _PRELUDE)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -332,7 +332,7 @@ def _read_code(name: str, meta: dict) -> str:
 
 
 def configured_allowed_apps() -> list[str]:
-    """plugins.entries.pocket-autopilot.settings.allowed_apps from the active profile's config."""
+    """plugins.entries.phone-autopilot.settings.allowed_apps from the active profile's config."""
     from hermes_cli.config import load_config_readonly
     entry = ((load_config_readonly() or {}).get("plugins", {}).get("entries", {}) or {}).get(PLUGIN) or {}
     apps = (entry.get("settings") or {}).get("allowed_apps") or []

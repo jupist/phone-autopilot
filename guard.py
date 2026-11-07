@@ -42,12 +42,12 @@ def _guard_allowed():
 def _guard_violation(pkg):
     dialog = pkg in _GUARD_PERMISSION_DIALOGS
     status = "needs_user" if dialog else "blocked"
-    print("@@POCKET " + _guard_json.dumps({"event": "guard", "status": status, "app": pkg}), flush=True)
+    print("@@AUTOPILOT " + _guard_json.dumps({"event": "guard", "status": status, "app": pkg}), flush=True)
     if dialog:
-        print("pocket-autopilot: stopped. Android is asking for a permission; the user must answer it "
+        print("phone-autopilot: stopped. Android is asking for a permission; the user must answer it "
               "on the phone. Never tap it from a script.", flush=True)
     else:
-        print(f"pocket-autopilot: stopped. {pkg} is not an allowed app. Ask the user to allow it with "
+        print(f"phone-autopilot: stopped. {pkg} is not an allowed app. Ask the user to allow it with "
               f"Allow in the phone pane, or by typing /routines allow {pkg}", flush=True)
         try:
             send("nav.home")

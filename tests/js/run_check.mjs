@@ -47,7 +47,7 @@ const ctx = {
 
 const mod = await import(pluginUrl)
 const plugin = mod.default
-assert(plugin.id === 'pocket-autopilot', 'default export id')
+assert(plugin.id === 'phone-autopilot', 'default export id')
 assert(typeof plugin.register === 'function', 'register() exists')
 plugin.register(ctx)
 
@@ -58,7 +58,7 @@ assert(pane && pane.area === 'panes' && pane.data.placement === 'right', 'pane r
 assert(chip && chip.area === 'statusBar.right' && typeof chip.render === 'function', 'status chip registered')
 assert(directive && directive.data.name === 'routine' && typeof directive.data.render === 'function', 'routine directive registered')
 for (const name of ['started', 'event', 'finished']) {
-  assert(typeof listeners[`plugin.pocket-autopilot.run.${name}`] === 'function', `listener for run.${name}`)
+  assert(typeof listeners[`plugin.phone-autopilot.run.${name}`] === 'function', `listener for run.${name}`)
 }
 
 const paneText = textOf(pane.render())
@@ -74,13 +74,13 @@ assert(directive.data.render({ attrs: { name: 'Bad Name!' }, source: '', streami
 
 const runId = '20260101-120000-abcd'
 const wrap = (payload) => ({ type: 'x', payload })
-listeners['plugin.pocket-autopilot.run.started'](wrap({ run_id: runId, routine: 'daily-claim', version: 3 }))
-listeners['plugin.pocket-autopilot.run.event'](wrap({ run_id: runId, routine: 'daily-claim', event: 'checkpoint', name: 'home', status: 'passed' }))
-listeners['plugin.pocket-autopilot.run.event'](wrap({
+listeners['plugin.phone-autopilot.run.started'](wrap({ run_id: runId, routine: 'daily-claim', version: 3 }))
+listeners['plugin.phone-autopilot.run.event'](wrap({ run_id: runId, routine: 'daily-claim', event: 'checkpoint', name: 'home', status: 'passed' }))
+listeners['plugin.phone-autopilot.run.event'](wrap({
   run_id: runId, routine: 'daily-claim', event: 'checkpoint', name: 'reward', status: 'failed',
   expected: 'Claim', seen_text: ['Store'], screenshot: '/tmp/x.png',
 }))
-listeners['plugin.pocket-autopilot.run.finished'](wrap({
+listeners['plugin.phone-autopilot.run.finished'](wrap({
   run_id: runId, routine: 'daily-claim', version: 3, ok: false,
   failed_checkpoint: { name: 'reward', expected: 'Claim', seen_text: ['Store'], screenshot: '/tmp/x.png' },
 }))
@@ -92,10 +92,10 @@ assert(afterRun.includes('/tmp/x.png'), 'failed checkpoint shows screenshot path
 assert(afterRun.includes('daily-claim v3'), 'run header shows routine and version')
 
 for (const name of ['requested', 'changed']) {
-  assert(typeof listeners[`plugin.pocket-autopilot.apps.${name}`] === 'function', `listener for apps.${name}`)
+  assert(typeof listeners[`plugin.phone-autopilot.apps.${name}`] === 'function', `listener for apps.${name}`)
 }
 globalThis.__queryData = {
-  'pocket-autopilot/apps': {
+  'phone-autopilot/apps': {
     ok: true,
     allowed: [],
     requests: [

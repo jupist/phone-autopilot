@@ -52,7 +52,7 @@ def test_malformed_cost_lines_from_script_output_are_ignored(engine, phone):
     phone.set_frames([{"app": "com.example.app", "texts": []}])
     record = _run(engine, "import atexit\n"
                           "atexit.register(lambda: print("
-                          "'@@POCKET {\"event\": \"cost\", \"helpers\": {\"x\": {\"calls\": \"many\"}}}'))\n"
+                          "'@@AUTOPILOT {\"event\": \"cost\", \"helpers\": {\"x\": {\"calls\": \"many\"}}}'))\n"
                           "done()\n")
     assert record["ok"] is True
     assert "time_spent" not in record or not any(line.startswith("x:") for line in record["time_spent"])

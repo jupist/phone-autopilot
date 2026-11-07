@@ -3,7 +3,7 @@
 phone-harness execs it with its helpers as globals (find_text, screen, screenshot,
 current_app, ...). Only stdlib imports at the top: a routine replays with no LLM and no extra
 packages. Image checks import Pillow lazily (Hermes ships it), so text-only routines never need
-it. Events leave as `@@POCKET {json}` lines the engine parses; anything else
+it. Events leave as `@@AUTOPILOT {json}` lines the engine parses; anything else
 the script prints is kept as plain output.
 """
 
@@ -26,7 +26,7 @@ class CheckpointMiss(Exception):
 
 
 def _emit(event, **fields):
-    print("@@POCKET " + json.dumps({"event": event, **fields}, ensure_ascii=False), flush=True)
+    print("@@AUTOPILOT " + json.dumps({"event": event, **fields}, ensure_ascii=False), flush=True)
 
 
 def _probe(check):

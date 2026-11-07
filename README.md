@@ -1,8 +1,8 @@
-# Pocket Autopilot
+# Phone Autopilot
 
 Teach your phone a task once, then replay it without the model.
 
-Pocket Autopilot is a Hermes plugin for phone routines. The agent explores a
+Phone Autopilot is a Hermes plugin for phone routines. The agent explores a
 task on your phone with `phone_exec`, and once it works, saves the steps as a
 **routine**. Routines replay with no LLM in the loop, verify themselves with
 **checkpoints** (a text or app check after every screen change), and ask the
@@ -14,10 +14,10 @@ your routines and a step-by-step run log.
 
 - Hermes Agent `>=0.21.6`
 - The [phone-harness](https://github.com/phone-harness/phone-harness) plugin,
-  which gives the agent `phone_exec`. Pocket Autopilot installs the
+  which gives the agent `phone_exec`. Phone Autopilot installs the
   `phone-harness` Python package it runs routines with, but not that plugin.
 - An Android phone with USB debugging on and `adb` on your PATH. phone-harness
-  also drives iPhones and cloud phones; Pocket Autopilot is built and tested
+  also drives iPhones and cloud phones; Phone Autopilot is built and tested
   on Android, and its system helpers (`shell`, `media_state`) and app
   allowlist need Android.
 - Optional: [`scrcpy`](https://github.com/Genymobile/scrcpy) for the pop-out window
@@ -26,10 +26,10 @@ your routines and a step-by-step run log.
 
 ```bash
 hermes plugins install phone-harness
-hermes plugins install https://github.com/jupist/pocket-autopilot
+hermes plugins install https://github.com/jupist/phone-autopilot
 ```
 
-Once it is in the plugin catalog: `hermes plugins install pocket-autopilot`.
+Once it is in the plugin catalog: `hermes plugins install phone-autopilot`.
 
 ## Quick start
 
@@ -52,7 +52,7 @@ text, and the routine line that raised.
 To run a routine every morning, add the blueprint:
 
 ```
-/blueprint pocket-autopilot:daily-routine
+/blueprint phone-autopilot:daily-routine
 ```
 
 Other commands: `/routines` lists routines and their last run, and
@@ -106,7 +106,7 @@ permission dialog, the script stops and leaves the dialog for you to answer
 on the phone.
 
 The list lives in `config.yaml` under
-`plugins.entries.pocket-autopilot.settings.allowed_apps` and also shows in
+`plugins.entries.phone-autopilot.settings.allowed_apps` and also shows in
 Settings → Plugins. An empty list (the default) turns the guard off.
 
 ## Where the time goes
@@ -144,9 +144,9 @@ own image search to that budget on a phone-sized screen.
 
 ## Desktop pane
 
-With Hermes Desktop (or `hermes webapp`), a **Pocket Autopilot** pane sits on
+With Hermes Desktop (or `hermes webapp`), a **Phone Autopilot** pane sits on
 the right. Like every user plugin, its Desktop half starts off: turn it on in
-**Capabilities → Plugins → Pocket Autopilot → Desktop**.
+**Capabilities → Plugins → Phone Autopilot → Desktop**.
 
 - The live phone screen. Click to tap; the tap point is mapped onto the
   phone's real resolution. Home, Back and Recents buttons appear when the
@@ -175,7 +175,7 @@ routine's code.
   `phone_exec` code (a `modify` directive). The watchdog is a thread inside the
   script that polls the foreground app. `post_tool_call` reads `phone_exec`
   output to raise an Allow card for a blocked app.
-- **Files.** It writes under `<HERMES_HOME>/plugin-data/pocket-autopilot/`:
+- **Files.** It writes under `<HERMES_HOME>/plugin-data/phone-autopilot/`:
   routines and their versions, image refs, run records with failure
   screenshots, pending app requests and a lock file. Outside it, it reads
   `config.yaml` (`allowed_apps`), the screenshot files the agent names when
@@ -205,17 +205,17 @@ routine's code.
                               ▼
                  phone_harness.run ──► phone (adb)
                               │
-              @@POCKET events on stdout
+              @@AUTOPILOT events on stdout
                               │
           ┌───────────────────┴───────────────────┐
           ▼                                       ▼
   run record on disk                 gateway event stream
-  (plugin-data/runs/…)               plugin.pocket-autopilot.run.*
+  (plugin-data/runs/…)               plugin.phone-autopilot.run.*
                                                   │
                                                   ▼
                                     Desktop pane, chip, transcript card
 
- Desktop pane ──► dashboard API (/api/plugins/pocket-autopilot)
+ Desktop pane ──► dashboard API (/api/plugins/phone-autopilot)
                   /status /frame /tap /key /routines /runs …
 ```
 

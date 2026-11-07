@@ -12,7 +12,7 @@ FAKE_PH_DIR = Path(__file__).resolve().parent / "fake_ph"
 @pytest.fixture
 def engine(monkeypatch, tmp_path):
     """A fresh engine module (fresh run lock) with all data under tmp_path."""
-    spec = importlib.util.spec_from_file_location("pocket_autopilot_engine", PLUGIN_DIR / "engine.py")
+    spec = importlib.util.spec_from_file_location("phone_autopilot_engine", PLUGIN_DIR / "engine.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     # Hermes's own seams (the profile's plugin-data folder and config.yaml), outside Hermes.

@@ -1,5 +1,5 @@
 /**
- * Pocket Autopilot, Desktop half: a live phone pane, the routine list and a
+ * Phone Autopilot, Desktop half: a live phone pane, the routine list and a
  * step-by-step run log, a status-bar chip, and the ::routine{name="..."}
  * transcript card.
  *
@@ -26,7 +26,7 @@ import {
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect, useState } from 'react'
 
-const ID = 'pocket-autopilot'
+const ID = 'phone-autopilot'
 const PANE_ID = `${ID}:phone`
 // The live view is the one fast poll. Everything else updates from plugin events; the slow polls
 // only catch what no event reports (a phone plugged in, a config edit by hand).
@@ -613,7 +613,7 @@ function PhonePane({ ctx }) {
       h(
         'div',
         { style: { ...MUTED, fontSize: 11 } },
-        connected ? (paused ? 'Live view paused' : 'Live') : 'Pocket Autopilot',
+        connected ? (paused ? 'Live view paused' : 'Live') : 'Phone Autopilot',
       ),
     ),
     h(
@@ -742,11 +742,11 @@ function StatusChip({ ctx }) {
   const text = last ? `${label} · last ${last.ok ? '✓' : '✗'}` : label
   return h(
     Tip,
-    { label: 'Show Pocket Autopilot' },
+    { label: 'Show Phone Autopilot' },
     h(
       'span',
       { style: INLINE },
-      h(Button, { variant: 'ghost', size: 'xs', 'aria-label': 'Show Pocket Autopilot', onClick: revealPane }, text),
+      h(Button, { variant: 'ghost', size: 'xs', 'aria-label': 'Show Phone Autopilot', onClick: revealPane }, text),
     ),
   )
 }
@@ -840,7 +840,7 @@ function RoutineCard({ ctx, name }) {
 
 export default {
   id: ID,
-  name: 'Pocket Autopilot',
+  name: 'Phone Autopilot',
   defaultEnabled: true,
   register(ctx) {
     ctx.onEvent(RUN_EVENTS.started, (event) => onRunStarted(event.payload || {}))
@@ -860,7 +860,7 @@ export default {
       {
         id: 'phone',
         area: PANES_AREA,
-        title: 'Pocket Autopilot',
+        title: 'Phone Autopilot',
         data: { placement: 'right', width: '320px' },
         render: () => h(PhonePane, { ctx }),
       },

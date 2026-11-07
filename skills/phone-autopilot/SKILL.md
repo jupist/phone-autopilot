@@ -1,5 +1,5 @@
 ---
-name: pocket-autopilot
+name: phone-autopilot
 description: "Save phone tasks as routines that replay without a model."
 version: 0.1.0
 author: Aman Jayesh (jupist), Hermes Agent
@@ -11,7 +11,7 @@ metadata:
     related_skills: [phone-harness]
 ---
 
-# Pocket Autopilot Skill
+# Phone Autopilot Skill
 
 A routine is a phone-harness script that replays a task with no model in the loop: explore the
 task with `phone_exec`, save the steps that worked with the `routine` tool, verify by running

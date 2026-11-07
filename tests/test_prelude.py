@@ -51,7 +51,7 @@ def load_prelude(fake):
 
 def events(capsys):
     out = capsys.readouterr().out
-    return [json.loads(line[len("@@POCKET "):]) for line in out.splitlines() if line.startswith("@@POCKET ")]
+    return [json.loads(line[len("@@AUTOPILOT "):]) for line in out.splitlines() if line.startswith("@@AUTOPILOT ")]
 
 
 def test_passing_checkpoint_emits_started_then_passed(capsys):

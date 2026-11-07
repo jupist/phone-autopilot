@@ -147,7 +147,7 @@ def test_a_run_from_another_copy_of_the_engine_waits_then_reports_busy(engine, p
     """The dashboard API loads its own engine module and cron runs elsewhere: one phone still."""
     monkeypatch.setattr(engine, "LOCK_WAIT_S", 0.2)
     _approved(engine)
-    spec = importlib.util.spec_from_file_location("pocket_autopilot_engine_copy", engine.__file__)
+    spec = importlib.util.spec_from_file_location("phone_autopilot_engine_copy", engine.__file__)
     other = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(other)
     monkeypatch.setattr(other, "data_dir", engine.data_dir)

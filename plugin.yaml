@@ -1,10 +1,10 @@
-name: pocket-autopilot
+name: phone-autopilot
 version: 0.1.0
 manifest_version: 2
 description: Teach your phone a task once, replay it without the model, heal it when an app changes, and schedule it daily. Builds on phone-harness.
 author: Aman Jayesh
 license: MIT
-homepage: https://github.com/jupist/pocket-autopilot
+homepage: https://github.com/jupist/phone-autopilot
 tags: [phone, android, automation, routines]
 requires_hermes: ">=0.21.6"
 requires_plugins:
