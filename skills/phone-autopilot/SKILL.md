@@ -47,8 +47,8 @@ that prompt.
    the fixed script, and `save` it as a new version. Then run it again. Each save is a new version
    the user approves; never patch the old one in place.
 
-After you save or run a routine, print this on its own line so Hermes Desktop shows a card, with
-the routine's real name:
+Once you have saved or run a routine, end your final reply with this line, once, so Hermes Desktop
+shows a card for it (the routine's real name):
 
 ```
 ::routine{name="daily-claim"}
@@ -60,12 +60,18 @@ the routine's real name:
 runs), `runs` (history), `delete` (only when the user asks). Names are lowercase letters, digits
 and hyphens, up to 48 characters.
 
+Routines run with the phone-harness helpers plus the ones this plugin adds. The plugin's helpers
+(`checkpoint`, `media_state`, `tap_image`, `find_image`, `looks_like`, `snap`, `changed`, `done`,
+`PARAMS`) exist only inside a routine, not in `phone_exec`. While exploring, read the same state
+with phone-harness and `shell` (for media, `dumpsys media_session`), and check image refs with a
+saved routine run.
+
 | Helper | What it does | Cost |
 |---|---|---|
 | `checkpoint(name, text= / any_of= / app=)` | waits for the screen, fails with evidence | one text read per poll |
 | `checkpoint(name, check=callable)` | waits for state the screen cannot show | as the callable |
 | `checkpoint(name, image=ref)` / `changed_from=(before, region)` | image checks | under 1s |
-| `media_state(app)` | what is playing, from which playlist or album | ~0.1s |
+| `media_state(app)` | what is playing, from which playlist or album | ~0.6s |
 | `shell(cmd)`, `current_app()`, key presses | system state and actions | under 0.2s |
 | `tap_ui(label)`, `tap_text(label)`, `screen()`, `find_text()` | read or tap by text | ~2.5s, ~12s to fail on a screen that never settles |
 | `tap_image(ref)`, `find_image(ref)` | find a saved crop anywhere on screen | under 1s |
