@@ -169,9 +169,7 @@ def test_other_routine_actions_pass_through(calls, args):
     assert tool.on_pre_tool_call(tool_name="routine", args=args) is None
 
 
-def test_other_tools_pass_through(calls, monkeypatch):
-    monkeypatch.setattr(engine, "configured_allowed_apps", lambda: [])
-    assert tool.on_pre_tool_call(tool_name="phone_exec", args={"code": "print(1)"}) is None
+def test_other_tools_pass_through(calls):
     assert tool.on_pre_tool_call(tool_name="terminal", args={"command": "ls"}) is None
 
 
@@ -290,16 +288,20 @@ def test_schema_exposes_one_routine_tool_with_action_enum():
     assert schema["parameters"]["required"] == ["action"]
 
 
-def test_phone_exec_gets_the_guard_prepended_when_an_allowlist_is_set(monkeypatch):
-    monkeypatch.setattr(engine, "configured_allowed_apps", lambda: ["com.example.app"], raising=False)
-    monkeypatch.setattr(engine, "guard_source", lambda apps: f"GUARD{apps}\n", raising=False)
-    directive = tool.on_pre_tool_call("phone_exec", {"code": "print(1)"})
-    assert directive == {"action": "modify", "args": {"code": "GUARD['com.example.app']\nprint(1)"}}
+def test_phone_exec_is_guarded_from_a_fresh_install_and_the_watch_ends_with_the_call(monkeypatch, tmp_path):
+    monkeypatch.setattr(engine, "_settings", lambda: {"allowed_apps": []})
+    monkeypatch.setattr(engine, "data_dir", lambda: tmp_path)
+    directive = tool.on_pre_tool_call("phone_exec", {"code": "print(1)", "timeout_s": 60})
+    code = directive["args"]["code"]
+    assert directive["action"] == "modify" and code.endswith("\nprint(1)")
+    assert code.startswith("ALLOWED_APPS = []\n") and "'script_timeout_s': 60.0" in code
+    stop = tool._EXEC_WATCH["stop"]
+    tool.on_post_tool_call("phone_exec", json.dumps({"success": True, "output": "1"}))
+    assert stop.is_set() and "stop" not in tool._EXEC_WATCH
 
 
-def test_phone_exec_is_untouched_without_an_allowlist(monkeypatch):
-    monkeypatch.setattr(engine, "configured_allowed_apps", lambda: [], raising=False)
-    monkeypatch.setattr(engine, "guard_source", lambda apps: "", raising=False)
+def test_phone_exec_is_untouched_when_the_user_allows_every_app(monkeypatch):
+    monkeypatch.setattr(engine, "_settings", lambda: {"allowed_apps": [], "allow_all_apps": True})
     assert tool.on_pre_tool_call("phone_exec", {"code": "print(1)"}) is None
 
 

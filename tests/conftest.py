@@ -17,7 +17,10 @@ def engine(monkeypatch, tmp_path):
     spec.loader.exec_module(module)
     # Hermes's own seams (the profile's plugin-data folder and config.yaml), outside Hermes.
     monkeypatch.setattr(module, "data_dir", lambda: tmp_path / "data")
-    monkeypatch.setattr(module, "configured_allowed_apps", lambda: [])
+    # The user has allowed the app the fake phone shows.
+    monkeypatch.setattr(module, "_settings", lambda: {"allowed_apps": ["com.example.app"]})
+    # A script that reaches an app nobody allowed waits this long for an answer (120s in use).
+    monkeypatch.setattr(module, "ASK_WAIT_S", 1)
     return module
 
 

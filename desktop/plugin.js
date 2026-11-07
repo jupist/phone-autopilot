@@ -113,6 +113,8 @@ function describeEvent(p) {
   if (p.event === 'checkpoint' && p.status === 'passed') return { mark: '✓', tone: OK, text: `checkpoint ${p.name}` }
   if (p.event === 'checkpoint' && p.status === 'failed') return { mark: '✗', tone: BAD, text: `checkpoint ${p.name} missed` }
   if (p.event === 'done') return { mark: '•', tone: MUTED_COLOR, text: 'done' }
+  if (p.event === 'asking') return { mark: '?', tone: WARN, text: `paused: waiting for you to allow ${p.app}` }
+  if (p.event === 'allowed') return { mark: '✓', tone: OK, text: `${p.app} allowed, carrying on` }
   return null
 }
 
@@ -463,8 +465,8 @@ function routinesSection(ctx, routines, { connected, runningNames }) {
 }
 
 // ---- app permissions -------------------------------------------------------
-// Allow is a person's click: the agent has no tool that grants apps, and this route needs the
-// dashboard session token only the UI holds.
+// Allow is a person's click: the agent has no tool that grants apps. A script waiting on a card is
+// paused; it carries on after Allow and stops after Not now.
 
 async function dismissApp(ctx, app) {
   const res = await call(ctx, '/apps/dismiss', { method: 'POST', body: { app } })
@@ -493,10 +495,14 @@ function whoTried(req) {
 
 function appRequestCard(ctx, req, allowed) {
   const permission = req.kind === 'permission'
-  const title = permission ? 'Android is asking for a permission' : `${whoTried(req)} tried to open an app`
+  const title = permission
+    ? 'Android is asking for a permission'
+    : req.waiting ? `${whoTried(req)} wants to use an app` : `${whoTried(req)} tried to use an app`
   const body = permission
     ? 'Answer the dialog on your phone. A routine never taps it for you.'
-    : 'It is not on your allowed apps, so the phone went Home and the script stopped.'
+    : req.waiting
+      ? 'Paused until you answer. Allow lets it carry on, now and from now on.'
+      : 'Nobody answered in time, so the phone went Home and the script stopped.'
   const buttons = permission
     ? [h(Button, { key: 'ok', variant: 'chip', size: 'xs', onClick: () => dismissApp(ctx, req.app) }, 'Done')]
     : [

@@ -78,11 +78,14 @@ def _delete(name: str) -> str:
 
 
 def _apps(_name: str) -> str:
+    if engine.configured_allow_all():
+        return "Routines may use any app: asking is turned off in the plugin's settings."
     allowed = engine.configured_allowed_apps()
-    lines = ["Allowed apps: " + (", ".join(allowed) if allowed else "none (the app guard is off)")]
+    lines = ["Allowed apps: " + (", ".join(allowed) if allowed else "none yet. Scripts ask before using an app.")]
     for request in engine.app_requests():
         by = f"routine {request['routine']}" if request.get("routine") else "the agent"
-        lines.append(f"Waiting for you: {request['app']} (opened by {by}; /routines allow {request['app']})")
+        state = "paused, waiting for you" if request.get("waiting") else "stopped"
+        lines.append(f"{request['app']}: {by} {state}. /routines allow {request['app']} lets it in.")
     return "\n".join(lines)
 
 

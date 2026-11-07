@@ -1,45 +1,132 @@
-"""App guard: opt-in allowlist enforced by a watchdog inside the phone script."""
+"""App guard: a script that reaches an app nobody allowed pauses and asks, and only a person answers."""
+import json
+import threading
 import time
+import types
+
+import pytest
+
+FOREIGN = "com.chat.messenger"
+# Three screens in the allowed app, then the foreign app stays in front.
+FRAMES = [{"app": "com.example.app", "texts": ["Home"]}] * 3 + [{"app": FOREIGN, "texts": ["Chats"]}]
+# Keeps reading until the foreign app is in front and the guard has paused it, then acts there.
+CODE = ("import time\n"
+        "for _ in range(30):\n    screen()\n    time.sleep(0.1)\n"
+        "checkpoint('chats', text='Chats', timeout=1)\n"
+        "tap(5, 5)\n"
+        "print('FINISHED')\n")
 
 
-def test_guard_source_is_empty_without_an_allowlist(engine):
-    assert engine.guard_source([]) == ""
-    assert engine.guard_source(None) == ""
-    assert engine.guard_source([" ", ""]) == ""
+@pytest.fixture
+def allowlist(engine, monkeypatch):
+    """config.yaml's allowed_apps as a list a test can change, as the Settings form would."""
+    store = ["com.example.app"]
+    monkeypatch.setattr(engine, "_settings", lambda: {"allowed_apps": list(store)})
+    return types.SimpleNamespace(apps=store, save=lambda apps: store.__setitem__(slice(None), apps))
 
 
-def test_guard_source_pins_a_sorted_allowlist(engine):
-    src = engine.guard_source(["com.b", "com.a", "com.a"])
-    assert src.startswith("ALLOWED_APPS = ['com.a', 'com.b']\n")
-    assert "_guard_watch" in src
-
-
-def test_guard_stops_a_run_that_reaches_a_disallowed_app(engine, phone):
-    phone.set_frames([{"app": "com.example.app", "texts": ["Home"]}] * 3
-                     + [{"app": "com.chat.messenger", "texts": ["Chats"]}])
-    code = "for _ in range(40):\n    screen()\n    time.sleep(0.1)\nprint('FINISHED')\n"
-    meta = engine.save_routine("guarded", "import time\n" + code)
+def _start(engine, phone):
+    """Run CODE in the background; returns (thread, result holder)."""
+    phone.set_frames(FRAMES)
+    meta = engine.save_routine("guarded", CODE)
     engine.approve("guarded", meta["sha256"])
-    started = time.time()
-    record = engine.run_routine("guarded", timeout_s=30, allowed_apps=["com.example.app"])
-    assert record["ok"] is False
-    assert record["error"].startswith("stopped: com.chat.messenger is not on the allowed apps list")
-    assert "SEND nav.home" in record["output_tail"]
-    assert "FINISHED" not in record["output_tail"]
-    assert time.time() - started < 10
+    result = {}
+    thread = threading.Thread(target=lambda: result.update(engine.run_routine("guarded", timeout_s=60)))
+    thread.start()
+    return thread, result
 
 
-def test_launcher_and_allowed_apps_do_not_trip_the_guard(engine, phone):
+def _wait_for_question(engine, timeout=10.0):
+    end = time.time() + timeout
+    while time.time() < end:
+        requests = engine.app_requests()
+        if requests and requests[0].get("waiting"):
+            return requests[0]
+        time.sleep(0.05)
+    raise AssertionError("the script never asked")
+
+
+def test_the_guard_is_on_from_a_fresh_install(engine):
+    source = engine.guard_source([], script_timeout_s=60, source="phone_exec")
+    assert source.startswith("ALLOWED_APPS = []\n") and "_guard_watch" in source
+
+
+def test_no_guard_when_the_user_lets_scripts_use_any_app(engine, monkeypatch):
+    monkeypatch.setattr(engine, "_settings", lambda: {"allow_all_apps": True})
+    assert engine.guard_source([], script_timeout_s=60, source="phone_exec") == ""
+
+
+def test_allow_resumes_the_paused_run_where_it_was(engine, phone, allowlist, monkeypatch):
+    monkeypatch.setattr(engine, "ASK_WAIT_S", 30)
+    thread, result = _start(engine, phone)
+    request = _wait_for_question(engine)
+    assert request["app"] == FOREIGN and request["routine"] == "guarded"
+    time.sleep(1.5)  # longer than the checkpoint's timeout: the wait must not count against it
+    engine.allow_app(FOREIGN, allowlist.save)
+    thread.join(30)
+    record = result
+    assert record["ok"] is True, record["error"]
+    assert [e["event"] for e in record["events"] if e["event"] in ("asking", "allowed")] == ["asking", "allowed"]
+    assert "TAP 5 5" in record["output_tail"] and "FINISHED" in record["output_tail"]
+    assert "SEND nav.home" not in record["output_tail"]
+    assert FOREIGN in allowlist.apps and engine.app_requests() == []
+    checkpoint = [line for line in record["time_spent"] if line.startswith("checkpoint")]
+    assert checkpoint and float(checkpoint[0].split(": ")[1].split("s")[0]) < 1.0
+
+
+def test_an_allow_saved_from_settings_also_resumes_the_run(engine, phone, allowlist, monkeypatch):
+    monkeypatch.setattr(engine, "ASK_WAIT_S", 30)
+    thread, result = _start(engine, phone)
+    _wait_for_question(engine)
+    allowlist.apps.append(FOREIGN)  # Hermes's settings writer: none of the plugin's code runs
+    thread.join(30)
+    assert result["ok"] is True, result["error"]
+
+
+def test_not_now_stops_the_run_without_acting_in_the_app(engine, phone, allowlist, monkeypatch):
+    monkeypatch.setattr(engine, "ASK_WAIT_S", 30)
+    thread, result = _start(engine, phone)
+    _wait_for_question(engine)
+    engine.dismiss_app_request(FOREIGN)
+    thread.join(30)
+    assert result["ok"] is False
+    assert result["error"] == f"stopped: the user chose Not now for {FOREIGN}. Do not use that app unless they ask"
+    assert "TAP 5 5" not in result["output_tail"] and "FINISHED" not in result["output_tail"]
+    assert "SEND nav.home" in result["output_tail"]
+    assert engine.app_requests() == []  # Not now is an answer, not a card for later
+    assert FOREIGN not in allowlist.apps
+
+
+def test_no_answer_stops_the_run_and_keeps_the_card(engine, phone, allowlist):
+    thread, result = _start(engine, phone)  # the test engine waits 1s for an answer
+    thread.join(30)
+    assert result["ok"] is False
+    assert f"/routines allow {FOREIGN}" in result["error"]
+    assert "TAP 5 5" not in result["output_tail"] and "SEND nav.home" in result["output_tail"]
+    [request] = engine.app_requests()
+    assert request["app"] == FOREIGN and request["waiting"] is False
+
+
+def test_an_old_answer_does_not_answer_a_new_question(engine, phone, allowlist):
+    engine.dismiss_app_request(FOREIGN)  # yesterday's Not now
+    thread, result = _start(engine, phone)
+    _wait_for_question(engine)  # still asks
+    thread.join(30)
+    assert "nobody answered" in result["error"]
+
+
+def test_launcher_and_allowed_apps_do_not_trip_the_guard(engine, phone, allowlist):
     phone.set_frames([{"app": "com.example.launcher", "texts": []},
                       {"app": "com.example.app", "texts": ["Ready"]}])
     meta = engine.save_routine("calm", "for _ in range(5):\n    screen()\ndone(ok=True)\n")
     engine.approve("calm", meta["sha256"])
-    record = engine.run_routine("calm", timeout_s=30, allowed_apps=["com.example.app"])
+    record = engine.run_routine("calm", timeout_s=30)
     assert record["ok"] is True, record["error"]
+    assert not any(e["event"] == "asking" for e in record["events"])
 
 
 def _guard_ns(foreground):
-    """guard.py in-process with a scripted foreground app (no watchdog thread: the list is empty)."""
+    """guard.py's functions in-process with a scripted foreground app (no watchdog thread)."""
     from pathlib import Path
     src = (Path(__file__).resolve().parent.parent / "guard.py").read_text(encoding="utf-8")
     ns = {"ALLOWED_APPS": [], "current_app": lambda: next(foreground)}
@@ -61,3 +148,12 @@ def test_a_permission_dialog_that_stays_up_is_left_for_the_user():
     dialog = "com.google.android.permissioncontroller"
     ns = _guard_ns(itertools.repeat(dialog))
     assert ns["_guard_dialog_stays"](dialog) is True
+
+
+def test_answers_older_than_the_question_are_ignored(tmp_path):
+    ns = _guard_ns(iter(()))
+    answers = tmp_path / "answers.json"
+    ns["_GUARD_ASK"] = {"answers": str(answers)}
+    answers.write_text(json.dumps({FOREIGN: {"answer": "allowed", "at": 100.0}}))
+    assert ns["_guard_answer"](FOREIGN, 99.0) == "allowed"
+    assert ns["_guard_answer"](FOREIGN, 101.0) is None

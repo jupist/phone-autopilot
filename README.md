@@ -19,7 +19,7 @@ your routines and a step-by-step run log.
 - An Android phone with USB debugging on and `adb` on your PATH. phone-harness
   also drives iPhones and cloud phones; Phone Autopilot is built and tested
   on Android, and its system helpers (`shell`, `media_state`) and app
-  allowlist need Android.
+  asking need Android.
 - Optional: [`scrcpy`](https://github.com/Genymobile/scrcpy) for the pop-out window
 
 ## Install
@@ -78,17 +78,24 @@ land on the wrong spot.
 Image search runs on Pillow alone and takes under a second on a phone-sized
 screen.
 
-## App allowlist
+## Apps ask first
 
-Choose which apps routines and `phone_exec` may use. With at least one app
-allowed, every script runs with a watchdog that checks the foreground app. If
-anything else comes to the front (apart from the launcher and system UI), it
-presses Home and stops the script.
+Routines and `phone_exec` scripts ask before they use an app, the way a phone
+asks for a permission. The first time a script brings a new app to the front,
+it pauses right there: every phone action and screen read waits, so it neither
+taps nor reads anything in that app. The phone pane shows a card:
 
-You don't have to list apps up front. The first time a script reaches a new
-app, the phone pane shows a card: **Routine deep-work tried to open an app:
-com.spotify.music [Allow] [Not now]**. One click allows it from then on. In
-chat, type the same thing as a command:
+**Routine deep-work wants to use an app: com.spotify.music [Allow] [Not now]**
+
+- **Allow** saves the app and the script carries on from the same screen. The
+  time it spent waiting does not count against its checkpoints.
+- **Not now** sends the phone Home and stops the script. The agent is told you
+  said no.
+- With no answer in 2 minutes (or before the script's own time limit), the
+  phone goes Home, the script stops, and the card stays for later.
+
+Launchers, the notification shade and system dialogs never ask. In chat, or
+without the Desktop pane:
 
 ```
 /routines allow com.spotify.music
@@ -100,14 +107,16 @@ Only you can allow an app. The agent has no tool for it, so even with
 approvals off (`/yolo`) the plugin gives it no way to widen the list. The
 Allow button saves through Hermes's plugin settings, the same call as the
 Settings form, and the slash command through the plugin's own settings
-writer. It is a guard rail, not a sandbox: an agent with shell access could
-still edit `config.yaml` directly. When Android shows an "Allow … ?"
+writer; a paused script picks up an Allow from either, or from the Settings
+form. It is a guard rail, not a sandbox: an agent with shell access could
+still edit `config.yaml` directly. When Android shows its own "Allow … ?"
 permission dialog, the script stops and leaves the dialog for you to answer
 on the phone.
 
-The list lives in `config.yaml` under
-`plugins.entries.phone-autopilot.settings.allowed_apps` and also shows in
-Settings → Plugins. An empty list (the default) turns the guard off.
+The allowed apps live in `config.yaml` under
+`plugins.entries.phone-autopilot.settings.allowed_apps` and show in
+Settings → Plugins. To let scripts use any app without asking, turn on
+**allow_all_apps** there.
 
 ## Where the time goes
 
@@ -171,13 +180,17 @@ routine's code.
   child runs in its own process group and is killed at the run's timeout
   (5 minutes by default).
 - **Hooks.** `pre_tool_call` puts saves and unapproved runs through Hermes's
-  approval prompt and, when an allowlist is set, prepends the app watchdog to
-  `phone_exec` code (a `modify` directive). The watchdog is a thread inside the
-  script that polls the foreground app. `post_tool_call` reads `phone_exec`
-  output to raise an Allow card for a blocked app.
+  approval prompt and prepends the app watchdog to `phone_exec` code (a
+  `modify` directive) unless you turned on `allow_all_apps`. The watchdog is a
+  thread inside the script that polls the foreground app and pauses the
+  script on an app you have not allowed. While a script runs, a thread in
+  Hermes turns its question into a card and passes your answer back.
+  `post_tool_call` reads `phone_exec` output to keep a card for a script that
+  stopped unanswered.
 - **Files.** It writes under `<HERMES_HOME>/plugin-data/phone-autopilot/`:
   routines and their versions, image refs, run records with failure
-  screenshots, pending app requests and a lock file. Outside it, it reads
+  screenshots, app requests, the question a paused script is asking
+  (`asking.json`) and your answers to it (`answers.json`), and a lock file. Outside it, it reads
   `config.yaml` (`allowed_apps`), the screenshot files the agent names when
   saving image refs, and phone-harness's own failure screenshots, which it
   copies into the run record. It changes `config.yaml` only through Hermes's

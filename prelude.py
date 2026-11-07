@@ -25,6 +25,17 @@ class CheckpointMiss(Exception):
     """The expected screen never showed up; the run stops at this checkpoint."""
 
 
+def _paused_s():
+    """Seconds the app guard has held the script while the user decided on an app (0 without it)."""
+    return globals().get("_GUARD_PAUSED_S", [0.0])[0]
+
+
+def _expiry(timeout):
+    """A deadline check that does not count time the script spent paused for the user."""
+    end, paused = time.time() + timeout, _paused_s()
+    return lambda: time.time() >= end + (_paused_s() - paused)
+
+
 def _emit(event, **fields):
     print("@@AUTOPILOT " + json.dumps({"event": event, **fields}, ensure_ascii=False), flush=True)
 
@@ -69,8 +80,8 @@ def open_app(name, timeout=10.0):
     The checkpoint after a launch is what waits for the right screen.
     """
     pkg = send("apps.launch", name=name) or name
-    deadline = time.time() + timeout
-    while time.time() < deadline and not _in_app(pkg):
+    expired = _expiry(timeout)
+    while not expired() and not _in_app(pkg):
         time.sleep(0.1)
     return pkg
 
@@ -360,12 +371,12 @@ def tap_image(ref, threshold=MATCH, timeout=10.0):
     """
     name = f"tap {ref}"
     _emit("checkpoint", name=name, status="started")
-    deadline = time.time() + timeout
+    expired = _expiry(timeout)
     while True:
         spot = _probe(lambda: find_image(ref, threshold))
         if spot:
             break
-        if time.time() >= deadline:
+        if expired():
             _miss(name, f"{ref!r} anywhere on screen")
         time.sleep(POLL_S)
     _emit("checkpoint", name=name, status="passed")
@@ -514,7 +525,7 @@ def checkpoint(name, text=None, any_of=None, app=None, timeout=10.0, exact=False
     engine records the failure and the agent can heal the routine.
     """
     _emit("checkpoint", name=name, status="started")
-    deadline = time.time() + timeout
+    expired = _expiry(timeout)
     while True:
         try:
             if _matches(text, any_of, app, exact, image, threshold, changed_from, check):
@@ -523,7 +534,7 @@ def checkpoint(name, text=None, any_of=None, app=None, timeout=10.0, exact=False
             _miss(name, _expected(text, any_of, app, image, changed_from, check)
                   + " (this screen never settles, so it has no readable text: check it with an image ref)",
                   read_text=False)
-        if time.time() >= deadline:
+        if expired():
             extra = {"similarity": _probe(lambda: looks_like(image, threshold)[1])} if image else {}
             _miss(name, _expected(text, any_of, app, image, changed_from, check), **extra)
         time.sleep(POLL_S)
@@ -559,13 +570,13 @@ def _timed(name, fn):
         if threading.current_thread() is not threading.main_thread():
             return fn(*args, **kwargs)  # the app guard's polling is not the routine's time
         _DEPTH[0] += 1
-        start = time.monotonic()
+        start, paused = time.monotonic(), _paused_s()
         try:
             return fn(*args, **kwargs)
         finally:
             _DEPTH[0] -= 1
             if _DEPTH[0] == 0:
-                spent = time.monotonic() - start
+                spent = time.monotonic() - start - (_paused_s() - paused)
                 entry = _COST.setdefault(name, [0, 0.0, 0.0])
                 entry[0] += 1
                 entry[1] += spent

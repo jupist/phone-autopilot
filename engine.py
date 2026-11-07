@@ -8,6 +8,7 @@ phone-harness's own Hermes plugin does, and streams the `@@AUTOPILOT` events it 
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import functools
 import hashlib
 import importlib.util
@@ -331,16 +332,28 @@ def _read_code(name: str, meta: dict) -> str:
     return code
 
 
-def configured_allowed_apps() -> list[str]:
-    """plugins.entries.phone-autopilot.settings.allowed_apps from the active profile's config."""
+def _settings() -> dict:
+    """plugins.entries.phone-autopilot.settings from the active profile's config."""
     from hermes_cli.config import load_config_readonly
     entry = ((load_config_readonly() or {}).get("plugins", {}).get("entries", {}) or {}).get(PLUGIN) or {}
-    apps = (entry.get("settings") or {}).get("allowed_apps") or []
+    settings = entry.get("settings") or {}
+    return settings if isinstance(settings, dict) else {}
+
+
+def configured_allowed_apps() -> list[str]:
+    apps = _settings().get("allowed_apps") or []
     return [str(a) for a in apps] if isinstance(apps, list) else []
 
 
+def configured_allow_all() -> bool:
+    """The user turned the app guard off: scripts may open any app without asking."""
+    return _settings().get("allow_all_apps") is True
+
+
 # ---------------------------------------------------------------------------
-# App permissions. Only a person grants an app: the phone pane's Allow button (saved through the
+# App permissions. A script that reaches an app the user has not allowed pauses and asks (see
+# guard.py): it writes asking.json, a watcher here turns that into a card, and the script reads the
+# user's answer from answers.json. Only a person grants an app: the phone pane's Allow button (saved through the
 # Desktop's plugin settings call, like the Settings form) and the /routines allow slash command
 # (saved through ctx.set_config). Never a tool, since a tool call is approved automatically under
 # /yolo and the agent would grant itself apps.
@@ -359,8 +372,33 @@ def validate_package(app: str) -> str:
     return app
 
 
+# How long a paused script waits for the user before it stops. A phone_exec call or a run
+# also never waits past its own timeout.
+ASK_WAIT_S = 120
+_WATCH_POLL_S = 0.3
+
+
 def _requests_path() -> Path:
     return data_dir() / "app_requests.json"
+
+
+def _asking_path() -> Path:
+    return data_dir() / "asking.json"
+
+
+def _answers_path() -> Path:
+    return data_dir() / "answers.json"
+
+
+def _record_answer(app: str, answer: str) -> None:
+    """Tell a paused script what the user decided (it ignores answers older than its question)."""
+    try:
+        answers = json.loads(_answers_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        answers = {}
+    answers = answers if isinstance(answers, dict) else {}
+    answers[app] = {"answer": answer, "at": time.time()}
+    _write_atomic(_answers_path(), json.dumps(answers, indent=2))
 
 
 def app_requests() -> list[dict]:
@@ -381,17 +419,22 @@ def _write_requests(items: list[dict]) -> None:
     _write_atomic(_requests_path(), json.dumps(items, indent=2))
 
 
-def block_message(app: str) -> str:
+def block_message(app: str, reason: str = "") -> str:
     """What the agent and the user read when the guard stops a script."""
     if app in PERMISSION_DIALOGS:
         return ("stopped: Android is asking for a permission. The user must answer that dialog "
                 "on the phone; never tap it from a script")
-    return (f"stopped: {app} is not on the allowed apps list. Ask the user to allow it with "
+    if reason == "denied":
+        return f"stopped: the user chose Not now for {app}. Do not use that app unless they ask"
+    return (f"stopped: nobody answered whether {app} may be used. Ask the user to allow it with "
             f"Allow in the phone pane, or by typing /routines allow {app}")
 
 
-def note_blocked_app(app: str, *, source: str, routine: str = "") -> dict | None:
-    """Queue a request for the user to answer; None when there is nothing to ask."""
+def note_blocked_app(app: str, *, source: str, routine: str = "", waiting: bool = False) -> dict | None:
+    """Queue a request for the user to answer; None when there is nothing to ask.
+
+    `waiting` marks a script that is paused on the app right now, rather than one that stopped.
+    """
     try:
         app = validate_package(app)
     except RoutineError:
@@ -399,13 +442,15 @@ def note_blocked_app(app: str, *, source: str, routine: str = "") -> dict | None
     if app in configured_allowed_apps():
         return None
     request = {"app": app, "kind": "permission" if app in PERMISSION_DIALOGS else "app",
-               "source": source, "routine": routine, "at": time.time()}
+               "source": source, "routine": routine, "at": time.time(), "waiting": waiting}
     _write_requests([request] + [i for i in app_requests() if i["app"] != app])
     _broadcast("apps.requested", request)
     return request
 
 
 def dismiss_app_request(app: str) -> None:
+    """Not now: a script paused on the app stops, and the card goes away."""
+    _record_answer(app, "denied")
     _write_requests([i for i in app_requests() if i["app"] != app])
     _broadcast("apps.changed", {"app": app})
 
@@ -422,8 +467,51 @@ def allow_app(app: str, save: Callable[[list[str]], None]) -> list[str]:
     if app not in apps:
         apps = apps + [app]
         save(apps)
-    dismiss_app_request(app)
+    _record_answer(app, "allowed")
+    _write_requests([i for i in app_requests() if i["app"] != app])
+    _broadcast("apps.changed", {"app": app})
     return apps
+
+
+def _watch_asking(stop: threading.Event, until: float) -> None:
+    """While a script runs: show its question as a card, and pass on an Allow from any surface.
+
+    The pane's Allow button and the Settings form save the allowlist through Hermes's settings
+    writer, which runs none of this plugin's code, so the watcher reads the saved list.
+    """
+    seen = None  # (app, asked_at) of the question on screen
+    answered = False
+    while not stop.is_set() and time.time() < until:
+        try:
+            asking = json.loads(_asking_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            asking = None
+        key = (str(asking.get("app")), asking.get("at")) if isinstance(asking, dict) else None
+        if key != seen:
+            if key:
+                note_blocked_app(key[0], source=str(asking.get("source") or ""),
+                                 routine=str(asking.get("routine") or ""), waiting=True)
+            else:  # the script resumed or stopped: an unanswered card stays, no longer waiting
+                _write_requests([{**i, "waiting": False} for i in app_requests()])
+                _broadcast("apps.changed", {"app": seen[0]})
+            seen, answered = key, False
+        elif key and not answered and key[0] in configured_allowed_apps():
+            _record_answer(key[0], "allowed")
+            _broadcast("apps.changed", {"app": key[0]})
+            answered = True
+        stop.wait(_WATCH_POLL_S)
+
+
+def start_asking_watch(timeout_s: float) -> threading.Event:
+    """Run the watcher for a script that may run up to `timeout_s`; set the event to end it.
+
+    The thread runs in the caller's context, so it reads the caller's profile.
+    """
+    stop = threading.Event()
+    context = contextvars.copy_context()
+    threading.Thread(target=context.run, args=(_watch_asking, stop, time.time() + timeout_s + JOIN_S),
+                     daemon=True, name="phone-autopilot-asking").start()
+    return stop
 
 
 def revoke_app(app: str, save: Callable[[list[str]], None]) -> list[str]:
@@ -445,15 +533,19 @@ def guard_events(text: str) -> list[dict]:
     return found
 
 
-def guard_source(allowed_apps) -> str:
-    """The app guard for a script, or "" when no allowlist is set (the guard is opt-in)."""
-    apps = sorted({str(a).strip() for a in (allowed_apps or ()) if str(a).strip()})
-    if not apps:
+def guard_source(allowed_apps, *, script_timeout_s: float, source: str, routine: str = "") -> str:
+    """The app guard for a script, or "" when the user lets scripts open any app."""
+    if configured_allow_all():
         return ""
-    return f"ALLOWED_APPS = {apps!r}\n" + _GUARD.read_text(encoding="utf-8") + "\n"
+    apps = sorted({str(a).strip() for a in (allowed_apps or ()) if str(a).strip()})
+    data_dir().mkdir(parents=True, exist_ok=True)  # the paused script writes its question here
+    ask = {"asking": str(_asking_path()), "answers": str(_answers_path()), "source": source,
+           "routine": routine, "wait_s": ASK_WAIT_S, "script_timeout_s": float(script_timeout_s)}
+    return (f"ALLOWED_APPS = {apps!r}\n_GUARD_ASK = {ask!r}\n"
+            + _GUARD.read_text(encoding="utf-8") + "\n")
 
 
-def _build_script(code: str, params: dict, workdir: Path, allowed_apps=None) -> str:
+def _build_script(code: str, params: dict, workdir: Path, guard: str = "") -> str:
     """Guard, prelude, then params and folder, then the routine body.
 
     The marker line tells the prelude where the body starts, so an error that ends the run names
@@ -463,7 +555,7 @@ def _build_script(code: str, params: dict, workdir: Path, allowed_apps=None) -> 
     """
     prelude = _PRELUDE.read_text(encoding="utf-8")
     params_literal = repr(json.dumps(params))
-    head = (f"{guard_source(allowed_apps)}{prelude}\nPARAMS.update(json.loads({params_literal}))\n"
+    head = (f"{guard}{prelude}\nPARAMS.update(json.loads({params_literal}))\n"
             f"ROUTINE_DIR = {str(workdir)!r}\nREFS.update({_refs_for(workdir)!r})\n")
     first_line = head.count("\n") + 2  # the body starts on the line after the marker below
     return f"{head}_ROUTINE_FIRST_LINE = {first_line}\n{code}"
@@ -605,8 +697,9 @@ class _Run:
             self.record["failed_checkpoint"] = {k: event.get(k)
                                                 for k in ("name", "expected", "seen_text", "screenshot", "similarity", "raised")}
         if event.get("event") == "guard":
-            self.record["error"] = block_message(str(event.get("app")))
-            note_blocked_app(str(event.get("app")), source="routine", routine=self.name)
+            self.record["error"] = block_message(str(event.get("app")), str(event.get("reason") or ""))
+            if event.get("reason") != "denied":
+                note_blocked_app(str(event.get("app")), source="routine", routine=self.name)
         if self.on_event is not None:
             try:
                 self.on_event(event)
@@ -691,7 +784,8 @@ def _finish(run: _Run, timed_out: bool, timeout_s: float) -> None:
 def _execute(name: str, meta: dict, code: str, params: dict, timeout_s: float,
              on_event: Callable[[dict], None] | None, allowed_apps=None) -> dict:
     workdir = _routine_dir(name)
-    script = _build_script(code, params, workdir, allowed_apps)
+    guard = guard_source(allowed_apps, script_timeout_s=timeout_s, source="routine", routine=name)
+    script = _build_script(code, params, workdir, guard)
     started = time.time()
     record = {"run_id": _new_run_id(), "routine": name, "version": meta["version"], "ok": False,
               "started_at": started, "finished_at": 0.0, "duration_s": 0.0, "exit_code": None,
@@ -705,7 +799,12 @@ def _execute(name: str, meta: dict, code: str, params: dict, timeout_s: float,
     except OSError as exc:
         record["error"] = f"failed to launch phone-harness: {exc}"
     else:
-        timed_out = _pump(proc, script, run, timeout_s)
+        watch = start_asking_watch(timeout_s) if guard else None
+        try:
+            timed_out = _pump(proc, script, run, timeout_s)
+        finally:
+            if watch is not None:
+                watch.set()
         record["exit_code"] = proc.returncode
     _finish(run, timed_out, timeout_s)
     return record

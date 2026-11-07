@@ -29,7 +29,7 @@ that prompt.
 
 - The phone-harness plugin, which provides `phone_exec`, with a phone connected
   (`ensure_device()` says what is missing).
-- Apps the routine opens must be on the user's allowed apps list when one is set (see Pitfalls).
+- The user allows each app a script uses the first time it opens; the phone pane asks them (see Pitfalls).
 
 ## How to Run
 
@@ -186,11 +186,14 @@ done(moves=len(PARAMS["moves"]))
 
 ## Pitfalls
 
-- **Allowed apps.** When the user set an allowed apps list, a watchdog stops any script that
-  brings another app to the front and the phone pane shows the user an Allow card.
-  `stopped: <app> is not on the allowed apps list`: tell the user which app and why the task
-  needs it. They allow it with the card or `/routines allow <app>`; you cannot grant apps, so do
-  not retry in that app until they say it is allowed.
+- **Apps ask first.** The first time a script brings an app the user has not allowed to the
+  front, it pauses there and the phone pane asks the user to Allow it or choose Not now; its
+  next phone call waits for the answer. Before a script first opens an app, say in chat which
+  app and why, so the card is no surprise. Give that `phone_exec` call a `timeout_s` of at least
+  90, because the wait comes out of the call's own time. After Allow the script carries on by
+  itself. `stopped: the user chose Not now for <app>` means no: do not use that app unless they
+  ask. `stopped: nobody answered` means they missed the card: ask them in chat, and retry only
+  after they allow it (the card, or `/routines allow <app>`). You cannot grant apps.
 - **Permission dialogs.** `stopped: Android is asking for a permission` means an "Allow ... ?"
   dialog is up. Ask the user to answer it on the phone. Never tap a permission dialog from a
   script.

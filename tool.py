@@ -18,6 +18,10 @@ DEFAULT_TIMEOUT_S = 300
 MAX_TIMEOUT_S = 900
 DEFAULT_RUNS_LIMIT = 20
 PREVIEW_LINES = 40
+# phone_exec's own timeout when the agent passes none, and its bounds (phone-harness's tool schema).
+PHONE_EXEC_TIMEOUT_S, PHONE_EXEC_TIMEOUT_RANGE = 300, (5, 1800)
+# The asking watcher of the phone_exec call in flight; phone-harness runs one script at a time.
+_EXEC_WATCH: dict[str, Any] = {}
 
 DESCRIPTION = (
     "Save, replay and repair phone routines: scripts that drive the user's phone with no model "
@@ -132,14 +136,34 @@ def _run_gate(args: dict) -> dict | None:
 _GATES: dict[str, Callable[[dict], dict | None]] = {"save": _save_gate, "run": _run_gate}
 
 
+def _exec_timeout(args: dict) -> int:
+    low, high = PHONE_EXEC_TIMEOUT_RANGE
+    try:
+        return max(low, min(int(args.get("timeout_s") or PHONE_EXEC_TIMEOUT_S), high))
+    except (TypeError, ValueError):
+        return PHONE_EXEC_TIMEOUT_S
+
+
 def _guard_phone_exec(args: dict) -> dict | None:
     # Prepending only restricts the script, so phone-harness's own approval of the original still
     # describes everything the script may do.
-    guard = engine.guard_source(engine.configured_allowed_apps())
     code = str(args.get("code") or "")
-    if not guard or not code.strip():
+    if not code.strip():
         return None
+    timeout_s = _exec_timeout(args)
+    guard = engine.guard_source(engine.configured_allowed_apps(), script_timeout_s=timeout_s,
+                                source="phone_exec")
+    if not guard:
+        return None
+    _stop_exec_watch()
+    _EXEC_WATCH["stop"] = engine.start_asking_watch(timeout_s)
     return {"action": "modify", "args": {"code": guard + code}}
+
+
+def _stop_exec_watch() -> None:
+    stop = _EXEC_WATCH.pop("stop", None)
+    if stop is not None:
+        stop.set()
 
 
 def on_pre_tool_call(tool_name: str = "", args: dict | None = None, **kwargs: Any) -> dict | None:
@@ -167,8 +191,10 @@ def on_post_tool_call(tool_name: str = "", result: Any = None, **kwargs: Any) ->
     """Queue an Allow request in the phone pane when the guard stopped a phone_exec script."""
     if tool_name != "phone_exec":
         return
+    _stop_exec_watch()
     for event in engine.guard_events(_exec_output(result)):
-        engine.note_blocked_app(str(event["app"]), source="phone_exec")
+        if event.get("reason") != "denied":
+            engine.note_blocked_app(str(event["app"]), source="phone_exec")
 
 
 def _save(args: dict) -> dict:

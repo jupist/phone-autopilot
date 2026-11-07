@@ -20,7 +20,7 @@ DIALOG = "com.google.android.permissioncontroller"
 def _store_allowlist(module, monkeypatch, initial=()):
     """The allowlist as a list: config.yaml's read, and the settings writer a surface passes in."""
     store = list(initial)
-    monkeypatch.setattr(module, "configured_allowed_apps", lambda: list(store))
+    monkeypatch.setattr(module, "_settings", lambda: {"allowed_apps": list(store)})
     events = []
     monkeypatch.setattr(module, "_broadcast", lambda event, payload: events.append((event, payload)))
     return store, events
@@ -47,7 +47,7 @@ def test_a_blocked_app_becomes_a_request_and_tells_the_agent_how_to_get_it(engin
     assert "/routines allow com.android.settings" in record["error"]
     [request] = engine.app_requests()
     assert request | {"at": 0} == {"app": "com.android.settings", "kind": "app", "source": "routine",
-                                   "routine": "deep-work", "at": 0}
+                                   "routine": "deep-work", "at": 0, "waiting": False}
     assert ("apps.requested", request) in allowlist.events
 
 

@@ -209,9 +209,9 @@ def test_register_wires_tool_hook_command_blueprint_and_skill():
     assert len(description) <= 60 and description.endswith(".")
 
 
-def test_the_registered_command_saves_grants_through_the_plugin_settings_writer(monkeypatch):
-    monkeypatch.setattr(engine, "configured_allowed_apps", lambda: ["com.example.app"])
-    monkeypatch.setattr(engine, "dismiss_app_request", lambda app: None)
+def test_the_registered_command_saves_grants_through_the_plugin_settings_writer(monkeypatch, tmp_path):
+    monkeypatch.setattr(engine, "_settings", lambda: {"allowed_apps": ["com.example.app"]})
+    monkeypatch.setattr(engine, "data_dir", lambda: tmp_path)
     ctx = _FakeCtx()
     plugin.register(ctx)
     [(_, command_kwargs)] = ctx.commands

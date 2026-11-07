@@ -99,18 +99,21 @@ globalThis.__queryData = {
     ok: true,
     allowed: [],
     requests: [
-      { app: 'com.android.settings', kind: 'app', source: 'routine', routine: 'deep-work', at: 2 },
+      { app: 'com.spotify.music', kind: 'app', source: 'routine', routine: 'deep-work', at: 3, waiting: true },
+      { app: 'com.android.settings', kind: 'app', source: 'phone_exec', at: 2, waiting: false },
       { app: 'com.google.android.permissioncontroller', kind: 'permission', source: 'phone_exec', at: 1 },
     ],
   },
 }
 const withRequests = textOf(pane.render())
-assert(withRequests.includes('Routine deep-work tried to open an app'), 'app request card names the routine')
+assert(withRequests.includes('Routine deep-work wants to use an app'), 'a paused routine card names the routine')
+assert(withRequests.includes('Paused until you answer'), 'a paused script says it is waiting')
+assert(withRequests.includes('The agent tried to use an app'), 'a stopped script card')
 assert(withRequests.includes('com.android.settings') && withRequests.includes('Allow'), 'app request card offers Allow')
 assert(withRequests.includes('Android is asking for a permission'), 'permission dialog card')
 assert(withRequests.includes('Answer the dialog on your phone'), 'permission dialog is answered on the phone')
 globalThis.__queryData = {}
-assert(!textOf(pane.render()).includes('tried to open an app'), 'no card without requests')
+assert(!textOf(pane.render()).includes('to use an app'), 'no card without requests')
 
 const src = await import('node:fs').then((fs) => fs.readFileSync(join(here, '..', '..', 'desktop', 'plugin.js'), 'utf8'))
 assert(!/\beval\s*\(|new Function|import\s*\(/.test(src), 'no eval, new Function or dynamic import')
