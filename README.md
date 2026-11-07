@@ -94,8 +94,10 @@ taps nor reads anything in that app. The phone pane shows a card:
 - With no answer in 2 minutes (or before the script's own time limit), the
   phone goes Home, the script stops, and the card stays for later.
 
-Launchers, the notification shade and system dialogs never ask. In chat, or
-without the Desktop pane:
+Launchers, the notification shade and system dialogs never ask. If you left
+an app open that is not allowed, the script starts from the Home screen rather
+than asking about an app it did not open. In chat, or without the Desktop
+pane:
 
 ```
 /routines allow com.spotify.music

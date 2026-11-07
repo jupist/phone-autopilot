@@ -49,7 +49,7 @@ def _guard_gate(fn):
                 pass
             _GUARD_PAUSED_S[0] += _guard_time.monotonic() - began
             if _GUARD_STOPPED[0]:
-                raise KeyboardInterrupt
+                raise SystemExit(1)  # the guard already said why
         return fn(*args, **kwargs)
 
     gated.__name__, gated.__doc__ = getattr(fn, "__name__", "helper"), getattr(fn, "__doc__", None)
@@ -150,8 +150,9 @@ def _guard_stop(pkg, reason):
         except Exception:
             pass
     _GUARD_STOPPED[0] = True
-    _thread.interrupt_main()
-    _GUARD_OPEN.set()
+    if dialog:  # the script was not paused: interrupt whatever it is doing
+        _thread.interrupt_main()
+    _GUARD_OPEN.set()  # a paused script wakes and exits at its gate
 
 
 def _guard_foreground():
@@ -190,5 +191,20 @@ def _guard_watch(allowed):
         _guard_time.sleep(_GUARD_POLL_S)
 
 
+def _guard_begin():
+    """Start from Home when the user left another app in front: the script did not open it, so
+    there is nothing to ask about, and the script must not read it."""
+    allowed = _guard_allowed()
+    pkg = _guard_foreground()
+    if pkg and pkg not in allowed and pkg not in _GUARD_PERMISSION_DIALOGS:
+        try:
+            send("nav.home")
+            print(f"phone-autopilot: {pkg} was open and is not an allowed app, so the script starts "
+                  f"from the Home screen.", flush=True)
+        except Exception:
+            pass
+    _guard_threading.Thread(target=_guard_watch, args=(allowed,), daemon=True).start()
+
+
 if globals().get("__name__") == "__main__":  # in a script, not when a test loads the functions
-    _guard_threading.Thread(target=_guard_watch, args=(_guard_allowed(),), daemon=True).start()
+    _guard_begin()

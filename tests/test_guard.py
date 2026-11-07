@@ -115,6 +115,16 @@ def test_an_old_answer_does_not_answer_a_new_question(engine, phone, allowlist):
     assert "nobody answered" in result["error"]
 
 
+def test_an_app_left_open_by_the_user_is_left_for_home_without_asking(engine, phone, allowlist):
+    phone.set_frames([{"app": FOREIGN, "texts": ["Chats"]}] + [{"app": "com.example.app", "texts": ["Ready"]}] * 3)
+    meta = engine.save_routine("starts", "import time\ntime.sleep(1.5)\nfor _ in range(3):\n    screen()\ndone()\n")
+    engine.approve("starts", meta["sha256"])
+    record = engine.run_routine("starts", timeout_s=30)
+    assert record["ok"] is True, record["error"]
+    assert record["output_tail"].startswith("SEND nav.home\nphone-autopilot: com.chat.messenger was open")
+    assert not any(e["event"] == "asking" for e in record["events"]) and engine.app_requests() == []
+
+
 def test_launcher_and_allowed_apps_do_not_trip_the_guard(engine, phone, allowlist):
     phone.set_frames([{"app": "com.example.launcher", "texts": []},
                       {"app": "com.example.app", "texts": ["Ready"]}])

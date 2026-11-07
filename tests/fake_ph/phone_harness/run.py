@@ -36,7 +36,8 @@ def find_text(query, exact=False):
 
 
 def current_app():
-    return _current()["app"]
+    # After Home, the launcher is in front until the script reads the next scripted screen.
+    return "com.example.launcher" if _STATE.get("home_at") == _STATE["calls"] else _current()["app"]
 
 
 def screenshot(path=None):
@@ -67,6 +68,8 @@ def send(op, **kw):
         image = _current()["image"]
         _STATE["calls"] += 1
         return image, None
+    if op == "nav.home":
+        _STATE["home_at"] = _STATE["calls"]
     print(f"SEND {op}", flush=True)
 
 
