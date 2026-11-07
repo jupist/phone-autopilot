@@ -1,7 +1,9 @@
 """App guard: source prepended to phone_exec scripts and routine runs.
 
 Runs inside phone-harness with its helpers as globals, after lines defining ALLOWED_APPS and
-_GUARD_ASK. A script can reach any app (a tap on a launcher label, a notification, a deep link),
+_GUARD_ASK. It always stops a script at Android's own permission dialog, which only the user
+answers. When the user turned on asking (_GUARD_ASK["apps"]), it also keeps scripts out of apps
+they have not allowed. A script can reach any app (a tap on a launcher label, a notification, a deep link),
 so a static check of the code cannot keep it out of apps the user has not allowed. A watchdog
 thread checks the foreground app instead.
 
@@ -242,7 +244,7 @@ def _guard_watch():
                 if _guard_dialog_stays(pkg):
                     _guard_stop(pkg, "dialog")
                     return
-            else:
+            elif _GUARD_ACTIVE[0]:
                 answer = _guard_ask(pkg)
                 if answer != "allowed":
                     _guard_stop(pkg, answer or "no_answer")
@@ -252,8 +254,14 @@ def _guard_watch():
 
 
 def _guard_begin():
-    """Start from Home when the user left another app in front: the script did not open it, so
-    there is nothing to ask about, and the script must not read it."""
+    """Watch for permission dialogs and, when asking is on, for apps the user has not allowed.
+
+    With asking on, start from Home when the user left another app in front: the script did not
+    open it, so there is nothing to ask about, and the script must not read it.
+    """
+    if not _GUARD_ASK.get("apps"):
+        _guard_threading.Thread(target=_guard_watch, daemon=True).start()
+        return
     _GUARD_ALLOWED.update(_guard_allowed())
     pkg = _guard_foreground()
     if pkg and pkg not in _GUARD_ALLOWED and pkg not in _GUARD_PERMISSION_DIALOGS:

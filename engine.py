@@ -345,9 +345,9 @@ def configured_allowed_apps() -> list[str]:
     return [str(a) for a in apps] if isinstance(apps, list) else []
 
 
-def configured_allow_all() -> bool:
-    """The user turned the app guard off: scripts may open any app without asking."""
-    return _settings().get("allow_all_apps") is True
+def configured_ask_before_apps() -> bool:
+    """The user turned on asking: scripts use only the apps they allowed, and ask about others."""
+    return _settings().get("ask_before_apps") is True
 
 
 # ---------------------------------------------------------------------------
@@ -534,13 +534,13 @@ def guard_events(text: str) -> list[dict]:
 
 
 def guard_source(allowed_apps, *, script_timeout_s: float, source: str, routine: str = "") -> str:
-    """The app guard for a script, or "" when the user lets scripts open any app."""
-    if configured_allow_all():
-        return ""
+    """The guard for a script: it always stops at Android's permission dialog, and asks about apps
+    the user has not allowed when they turned asking on."""
     apps = sorted({str(a).strip() for a in (allowed_apps or ()) if str(a).strip()})
     data_dir().mkdir(parents=True, exist_ok=True)  # the paused script writes its question here
     ask = {"asking": str(_asking_path()), "answers": str(_answers_path()), "source": source,
-           "routine": routine, "wait_s": ASK_WAIT_S, "script_timeout_s": float(script_timeout_s)}
+           "routine": routine, "wait_s": ASK_WAIT_S, "script_timeout_s": float(script_timeout_s),
+           "apps": configured_ask_before_apps()}
     return (f"ALLOWED_APPS = {apps!r}\n_GUARD_ASK = {ask!r}\n"
             + _GUARD.read_text(encoding="utf-8") + "\n")
 
@@ -799,7 +799,7 @@ def _execute(name: str, meta: dict, code: str, params: dict, timeout_s: float,
     except OSError as exc:
         record["error"] = f"failed to launch phone-harness: {exc}"
     else:
-        watch = start_asking_watch(timeout_s) if guard else None
+        watch = start_asking_watch(timeout_s) if configured_ask_before_apps() else None
         try:
             timed_out = _pump(proc, script, run, timeout_s)
         finally:

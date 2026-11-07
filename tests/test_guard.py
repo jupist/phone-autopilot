@@ -19,9 +19,9 @@ CODE = ("import time\n"
 
 @pytest.fixture
 def allowlist(engine, monkeypatch):
-    """config.yaml's allowed_apps as a list a test can change, as the Settings form would."""
+    """Asking turned on, and allowed_apps as a list a test can change, as the Settings form would."""
     store = ["com.example.app"]
-    monkeypatch.setattr(engine, "_settings", lambda: {"allowed_apps": list(store)})
+    monkeypatch.setattr(engine, "_settings", lambda: {"ask_before_apps": True, "allowed_apps": list(store)})
     return types.SimpleNamespace(apps=store, save=lambda apps: store.__setitem__(slice(None), apps))
 
 
@@ -46,14 +46,23 @@ def _wait_for_question(engine, timeout=10.0):
     raise AssertionError("the script never asked")
 
 
-def test_the_guard_is_on_from_a_fresh_install(engine):
-    source = engine.guard_source([], script_timeout_s=60, source="phone_exec")
-    assert source.startswith("ALLOWED_APPS = []\n") and "_guard_watch" in source
+def test_by_default_scripts_use_any_app_without_asking(engine, phone, monkeypatch):
+    monkeypatch.setattr(engine, "_settings", lambda: {})  # a fresh install
+    thread, result = _start(engine, phone)
+    thread.join(30)
+    assert result["ok"] is True, result["error"]
+    assert "TAP 5 5" in result["output_tail"] and engine.app_requests() == []
+    assert not any(e["event"] == "asking" for e in result["events"])
 
 
-def test_no_guard_when_the_user_lets_scripts_use_any_app(engine, monkeypatch):
-    monkeypatch.setattr(engine, "_settings", lambda: {"allow_all_apps": True})
-    assert engine.guard_source([], script_timeout_s=60, source="phone_exec") == ""
+def test_by_default_a_permission_dialog_still_stops_the_script(engine, phone, monkeypatch):
+    monkeypatch.setattr(engine, "_settings", lambda: {})
+    phone.set_frames(FRAMES[:3] + [{"app": "com.google.android.permissioncontroller", "texts": ["Allow"]}])
+    meta = engine.save_routine("dialog", CODE)
+    engine.approve("dialog", meta["sha256"])
+    record = engine.run_routine("dialog", timeout_s=30)
+    assert record["ok"] is False and "must answer that dialog on the phone" in record["error"]
+    assert "TAP 5 5" not in record["output_tail"]
 
 
 def test_allow_resumes_the_paused_run_where_it_was(engine, phone, allowlist, monkeypatch):

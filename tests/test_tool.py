@@ -288,21 +288,22 @@ def test_schema_exposes_one_routine_tool_with_action_enum():
     assert schema["parameters"]["required"] == ["action"]
 
 
-def test_phone_exec_is_guarded_from_a_fresh_install_and_the_watch_ends_with_the_call(monkeypatch, tmp_path):
-    monkeypatch.setattr(engine, "_settings", lambda: {"allowed_apps": []})
+def test_phone_exec_keeps_the_dialog_guard_but_nothing_waits_for_answers_by_default(monkeypatch, tmp_path):
+    monkeypatch.setattr(engine, "_settings", lambda: {})
+    monkeypatch.setattr(engine, "data_dir", lambda: tmp_path)
+    directive = tool.on_pre_tool_call("phone_exec", {"code": "print(1)"})
+    assert directive["action"] == "modify" and directive["args"]["code"].endswith("\nprint(1)")
+    assert "stop" not in tool._EXEC_WATCH
+
+
+def test_with_asking_on_a_phone_exec_call_has_a_watch_that_ends_with_it(monkeypatch, tmp_path):
+    monkeypatch.setattr(engine, "_settings", lambda: {"ask_before_apps": True})
     monkeypatch.setattr(engine, "data_dir", lambda: tmp_path)
     directive = tool.on_pre_tool_call("phone_exec", {"code": "print(1)", "timeout_s": 60})
-    code = directive["args"]["code"]
-    assert directive["action"] == "modify" and code.endswith("\nprint(1)")
-    assert code.startswith("ALLOWED_APPS = []\n") and "'script_timeout_s': 60.0" in code
+    assert "'script_timeout_s': 60.0" in directive["args"]["code"]
     stop = tool._EXEC_WATCH["stop"]
     tool.on_post_tool_call("phone_exec", json.dumps({"success": True, "output": "1"}))
     assert stop.is_set() and "stop" not in tool._EXEC_WATCH
-
-
-def test_phone_exec_is_untouched_when_the_user_allows_every_app(monkeypatch):
-    monkeypatch.setattr(engine, "_settings", lambda: {"allowed_apps": [], "allow_all_apps": True})
-    assert tool.on_pre_tool_call("phone_exec", {"code": "print(1)"}) is None
 
 
 def test_an_unexpected_error_comes_back_as_error_json(monkeypatch):

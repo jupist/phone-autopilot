@@ -78,9 +78,10 @@ def _delete(name: str) -> str:
 
 
 def _apps(_name: str) -> str:
-    if engine.configured_allow_all():
-        return "Routines may use any app: asking is turned off in the plugin's settings."
     allowed = engine.configured_allowed_apps()
+    if not engine.configured_ask_before_apps():
+        return ("Scripts may use any app. To approve each app the first time a script uses it, turn on "
+                "ask_before_apps in Settings → Plugins → Phone Autopilot.")
     lines = ["Allowed apps: " + (", ".join(allowed) if allowed else "none yet. Scripts ask before using an app.")]
     for request in engine.app_requests():
         by = f"routine {request['routine']}" if request.get("routine") else "the agent"

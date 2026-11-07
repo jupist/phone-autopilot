@@ -29,7 +29,7 @@ that prompt.
 
 - The phone-harness plugin, which provides `phone_exec`, with a phone connected
   (`ensure_device()` says what is missing).
-- The user allows each app a script uses the first time it opens; the phone pane asks them (see Pitfalls).
+- If the user turned on asking before apps, they allow each app the first time a script uses it (see Pitfalls).
 
 ## How to Run
 
@@ -186,8 +186,8 @@ done(moves=len(PARAMS["moves"]))
 
 ## Pitfalls
 
-- **Apps ask first.** Before a script opens an app the user has not allowed, the phone pane
-  asks them to Allow it or choose Not now, and the script waits for the answer. Open apps with
+- **Asking before apps.** When the user turned this on, the phone pane asks them to Allow or
+  choose Not now before a script uses an app they have not allowed, and the script waits. Open apps with
   `open_app("<package>")` so the question comes before the app appears; an app reached any
   other way pauses the script once it is in front. Before a script first opens an app, say in
   chat which app and why, so the card is no surprise. Give that `phone_exec` call a `timeout_s` of at least

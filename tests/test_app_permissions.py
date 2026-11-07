@@ -20,7 +20,7 @@ DIALOG = "com.google.android.permissioncontroller"
 def _store_allowlist(module, monkeypatch, initial=()):
     """The allowlist as a list: config.yaml's read, and the settings writer a surface passes in."""
     store = list(initial)
-    monkeypatch.setattr(module, "_settings", lambda: {"allowed_apps": list(store)})
+    monkeypatch.setattr(module, "_settings", lambda: {"ask_before_apps": True, "allowed_apps": list(store)})
     events = []
     monkeypatch.setattr(module, "_broadcast", lambda event, payload: events.append((event, payload)))
     return store, events

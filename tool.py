@@ -153,10 +153,9 @@ def _guard_phone_exec(args: dict) -> dict | None:
     timeout_s = _exec_timeout(args)
     guard = engine.guard_source(engine.configured_allowed_apps(), script_timeout_s=timeout_s,
                                 source="phone_exec")
-    if not guard:
-        return None
     _stop_exec_watch()
-    _EXEC_WATCH["stop"] = engine.start_asking_watch(timeout_s)
+    if engine.configured_ask_before_apps():
+        _EXEC_WATCH["stop"] = engine.start_asking_watch(timeout_s)
     return {"action": "modify", "args": {"code": guard + code}}
 
 

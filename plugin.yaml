@@ -18,15 +18,16 @@ provides_hooks:
   - pre_tool_call
   - post_tool_call
 config_schema:
+  ask_before_apps:
+    type: bool
+    default: false
+    description: >-
+      Ask before a routine or phone_exec uses an app that is not in allowed_apps. The script
+      waits while the phone pane asks you to Allow it or choose Not now. Off: scripts may use
+      any app. Either way, scripts stop at Android's own permission dialogs and leave them to you.
   allowed_apps:
     type: list
     default: []
     description: >-
-      Android package names routines and phone_exec may use, e.g. com.spotify.music.
-      The first time a script reaches any other app, it pauses and the phone pane asks you
-      to Allow it or choose Not now. Launchers and system dialogs never ask.
-  allow_all_apps:
-    type: bool
-    default: false
-    description: >-
-      Let routines and phone_exec use any app without asking.
+      Apps you have allowed, as Android package names (e.g. com.spotify.music). Used when
+      ask_before_apps is on.

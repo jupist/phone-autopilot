@@ -78,10 +78,12 @@ land on the wrong spot.
 Image search runs on Pillow alone and takes under a second on a phone-sized
 screen.
 
-## Apps ask first
+## Asking before apps
 
-Routines and `phone_exec` scripts ask before they use an app, the way a phone
-asks for a permission. When a script launches an app you have not allowed by
+By default, routines and `phone_exec` scripts may use any app. To approve each
+app first, turn on **ask_before_apps** in Settings → Plugins → Phone
+Autopilot. Scripts then ask before they use an app, the way a phone asks for a
+permission. When a script launches an app you have not allowed by
 its package name (`open_app("com.spotify.music")`, or `am start -n` /
 `monkey -p` in `shell`), it asks before the app opens. If it reaches an app
 another way (a launcher icon, a notification, a link), it pauses as soon as
@@ -114,14 +116,14 @@ Allow button saves through Hermes's plugin settings, the same call as the
 Settings form, and the slash command through the plugin's own settings
 writer; a paused script picks up an Allow from either, or from the Settings
 form. It is a guard rail, not a sandbox: an agent with shell access could
-still edit `config.yaml` directly. When Android shows its own "Allow … ?"
-permission dialog, the script stops and leaves the dialog for you to answer
-on the phone.
+still edit `config.yaml` directly. Whether or not asking is on, when Android
+shows its own "Allow … ?" permission dialog, the script stops and leaves the
+dialog for you to answer on the phone.
 
 The allowed apps live in `config.yaml` under
 `plugins.entries.phone-autopilot.settings.allowed_apps` and show in
-Settings → Plugins. To let scripts use any app without asking, turn on
-**allow_all_apps** there.
+Settings → Plugins. Turn **ask_before_apps** off again to let scripts use any
+app.
 
 ## Where the time goes
 
@@ -185,11 +187,12 @@ routine's code.
   child runs in its own process group and is killed at the run's timeout
   (5 minutes by default).
 - **Hooks.** `pre_tool_call` puts saves and unapproved runs through Hermes's
-  approval prompt and prepends the app watchdog to `phone_exec` code (a
-  `modify` directive) unless you turned on `allow_all_apps`. The watchdog is a
-  thread inside the script that polls the foreground app and pauses the
-  script on an app you have not allowed. While a script runs, a thread in
-  Hermes turns its question into a card and passes your answer back.
+  approval prompt and prepends a watchdog to `phone_exec` code (a `modify`
+  directive). The watchdog is a thread inside the script that polls the
+  foreground app: it stops the script at Android's permission dialog and,
+  with `ask_before_apps` on, pauses it on an app you have not allowed. While
+  such a script runs, a thread in Hermes turns its question into a card and
+  passes your answer back.
   `post_tool_call` reads `phone_exec` output to keep a card for a script that
   stopped unanswered.
 - **Files.** It writes under `<HERMES_HOME>/plugin-data/phone-autopilot/`:
