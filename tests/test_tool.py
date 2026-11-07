@@ -140,6 +140,27 @@ def test_approval_names_everything_past_the_preview(calls):
     assert "and 39 more" in message  # 45 steps, 6 shown
 
 
+def test_approval_shows_the_values_params_hold(calls):
+    # open_app(PARAMS['app']) alone does not say which app the user is approving.
+    code = "app = PARAMS['app']\nopen_app(app)\ntype_text(PARAMS['query'])\ntap_ui(PARAMS['missing'])\n"
+    message = tool.on_pre_tool_call(tool_name="routine", args={
+        "action": "save", "name": "x", "code": code,
+        "params": {"app": "com.example.app", "query": "jazz " * 30}})["message"]
+    assert "Opens apps: app (PARAMS['app']) = 'com.example.app'" in message
+    assert "Types: PARAMS['query'] = 'jazz jazz" in message and "…" in message
+    assert "Taps by label: PARAMS['missing']\n" in message
+
+
+def test_run_approval_shows_saved_params_overridden_by_the_call(calls, monkeypatch):
+    meta = {**_approved_meta(), "approved_sha256": None, "code": "open_app(PARAMS['app'])\n",
+            "params": {"app": "com.saved.app"}}
+    monkeypatch.setattr(engine, "get_routine", lambda name: meta)
+    monkeypatch.setattr(engine, "is_approved", lambda meta: False)
+    message = tool.on_pre_tool_call(tool_name="routine", args={
+        "action": "run", "name": "daily-claim", "params": {"app": "com.given.app"}})["message"]
+    assert "Opens apps: PARAMS['app'] = 'com.given.app'" in message
+
+
 def test_run_unapproved_routine_asks(calls):
     directive = tool.on_pre_tool_call(tool_name="routine",
                                       args={"action": "run", "name": "daily-claim"})

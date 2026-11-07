@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 
 _SHOW = 6  # entries per category before "and N more"
+_VALUE_CHARS = 60  # a parameter value longer than this is cut short
 
 # helper name -> category label, in display order
 _CALLS = {
@@ -23,16 +24,25 @@ _CALLS = {
 _COUNTED = {"tap": "taps at coordinates", "swipe": "swipes", "checkpoint": "checkpoints"}
 
 
-def _assignments(tree: ast.AST, source: str) -> dict[str, str]:
-    """name -> source of what it was set to, for names assigned exactly once (spotify = PARAMS[...])."""
-    seen: dict[str, list[str]] = {}
+def _assignments(tree: ast.AST) -> dict[str, ast.expr]:
+    """name -> what it was set to, for names assigned exactly once (spotify = PARAMS[...])."""
+    seen: dict[str, list[ast.expr]] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-            seen.setdefault(node.targets[0].id, []).append(ast.get_source_segment(source, node.value) or "")
-    return {name: values[0] for name, values in seen.items() if len(values) == 1 and values[0]}
+            seen.setdefault(node.targets[0].id, []).append(node.value)
+    return {name: values[0] for name, values in seen.items() if len(values) == 1}
 
 
-def _arg(node: ast.Call, source: str, names: dict[str, str]) -> str:
+def _param_value(node: ast.expr, params: dict) -> str | None:
+    """The value a PARAMS['key'] lookup gets on this run, shown short; None for anything else."""
+    if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == "PARAMS"
+            and isinstance(node.slice, ast.Constant) and node.slice.value in params):
+        value = repr(params[node.slice.value])
+        return value if len(value) <= _VALUE_CHARS else value[:_VALUE_CHARS - 1] + "…"
+    return None
+
+
+def _arg(node: ast.Call, source: str, names: dict[str, ast.expr], params: dict) -> str:
     if not node.args:
         return "(no argument)"
     first = node.args[0]
@@ -40,8 +50,10 @@ def _arg(node: ast.Call, source: str, names: dict[str, str]) -> str:
         return repr(first.value)
     text = ast.get_source_segment(source, first) or "(computed)"
     if isinstance(first, ast.Name) and first.id in names:
-        return f"{text} ({names[first.id]})"
-    return text
+        first = names[first.id]
+        text = f"{text} ({ast.get_source_segment(source, first) or '(computed)'})"
+    value = _param_value(first, params)
+    return f"{text} = {value}" if value else text
 
 
 def _called(node: ast.Call) -> str:
@@ -66,13 +78,18 @@ def _line(label: str, items: list[str]) -> str:
     return f"  {label}: {shown}{more}"
 
 
-def summarize(code: str) -> str:
-    """A few lines naming everything the script can do; never raises."""
+def summarize(code: str, params: dict | None = None) -> str:
+    """A few lines naming everything the script can do; never raises.
+
+    `params` are the values PARAMS holds on this run, so `open_app(PARAMS['app'])` reads as the app
+    it opens rather than as a name.
+    """
     try:
         tree = ast.parse(code)
     except SyntaxError as exc:
         return f"  (does not parse: {exc.msg} on line {exc.lineno})"
-    names = _assignments(tree, code)
+    names = _assignments(tree)
+    params = params if isinstance(params, dict) else {}
     found: dict[str, list[str]] = {}
     counts = dict.fromkeys(_COUNTED, 0)
     for node in ast.walk(tree):
@@ -80,7 +97,7 @@ def summarize(code: str) -> str:
             continue
         name = _called(node)
         if name in _CALLS:
-            found.setdefault(_CALLS[name], []).append(_arg(node, code, names))
+            found.setdefault(_CALLS[name], []).append(_arg(node, code, names, params))
         elif name in counts:
             counts[name] += 1
     lines = [_line(label, found[label]) for label in dict.fromkeys(_CALLS.values()) if label in found]

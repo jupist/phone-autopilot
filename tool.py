@@ -97,12 +97,22 @@ def _next_version(name: str) -> int:
         return 1
 
 
-def _review_message(verb: str, name: str, title: str, version: int, code: str) -> str:
+def _saved_params(name: str, given) -> dict:
+    """The defaults a save leaves the routine with: the ones given, or else the ones it keeps."""
+    if isinstance(given, dict):
+        return given
+    try:
+        return engine.get_routine(name).get("params") or {}
+    except engine.RoutineError:
+        return {}
+
+
+def _review_message(verb: str, name: str, title: str, version: int, code: str, params: dict) -> str:
     lines = code.splitlines()
     preview = "\n".join(lines[:PREVIEW_LINES])
     rest = f"\n… {len(lines) - PREVIEW_LINES} more lines" if len(lines) > PREVIEW_LINES else ""
     return (f"{title} — {verb} routine '{name}' (v{version}, {len(lines)} lines).\n"
-            f"What it does on the phone:\n{review.summarize(code)}\n"
+            f"What it does on the phone:\n{review.summarize(code, params)}\n"
             f"Code:\n{preview}{rest}")
 
 
@@ -117,7 +127,8 @@ def _save_gate(args: dict) -> dict:
     name = str(args.get("name") or "")
     code = str(args.get("code") or "")
     sha = engine.code_sha256(code)
-    message = _review_message("save", name, str(args.get("title") or name), _next_version(name), code)
+    message = _review_message("save", name, str(args.get("title") or name), _next_version(name), code,
+                              _saved_params(name, args.get("params")))
     return _approve_directive("save", name, sha, message)
 
 
@@ -129,7 +140,9 @@ def _run_gate(args: dict) -> dict | None:
         return None  # nothing to approve; the handler reports the missing routine
     if engine.is_approved(meta):
         return None
-    message = _review_message("run", name, str(meta.get("title") or name), int(meta["version"]), meta["code"])
+    params = {**(meta.get("params") or {}), **(args.get("params") or {})}  # as engine.run_routine merges
+    message = _review_message("run", name, str(meta.get("title") or name), int(meta["version"]), meta["code"],
+                              params)
     return _approve_directive("run", name, meta["sha256"], message)
 
 
